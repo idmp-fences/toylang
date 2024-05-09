@@ -18,7 +18,7 @@ final {
 }
 ```
 
-The full grammar can be found at [parser\src\toy.pest](parser\src\toy.pest).
+The full grammar can be found at [parser/src/toy.pest](parser/src/toy.pest).
 
 ## Documentation
 
