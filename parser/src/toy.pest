@@ -1,0 +1,33 @@
+program     =  _{ SOI ~ init* ~ thread* ~ final ~ EOI }
+thread      =  { "thread" ~ name ~ "{" ~ stmt* ~ "}" }
+stmt        =  {
+    modify
+  | assign
+  | fence
+}
+modify = { name ~ "=" ~ expr ~ ";" }
+fence = { "Fence" ~ "(" ~ fencemarker ~ ")" ~ ";" }
+assign = { "let" ~ name ~ ":" ~ "u32" ~ "=" ~ expr ~ ";" }
+
+init        =  { assign }
+final       =  { "final" ~ "{" ~ assert* ~ "}" }
+expr        =  { name | num }
+fencemarker =  { "WR" | "WW" | "RW" | "RR" }
+
+assert      =  { "assert" ~ "(" ~ logicexpr ~ ")" ~ ";" }
+atom  =  {
+    "!" ~ logicexpr
+  | "(" ~ logicexpr ~ ")"
+  | logicint ~ "==" ~ logicint
+}
+// '&&' has lowest precedence
+logicexpr = { atom ~ ("&&" ~ atom)* } 
+
+logicint    =  { logicvar | num }
+logicvar    = @{ name ~ "." ~ name }
+name        = @{ ('a'..'z' | 'A'..'Z') ~ ('a'..'z' | 'A'..'Z' | ASCII_DIGIT)* }
+num         = @{ ASCII_DIGIT+ }
+WHITESPACE  = _{ " " | NEWLINE }
+
+// do not consume newline at end of a comment
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
