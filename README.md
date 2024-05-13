@@ -18,7 +18,14 @@ final {
 }
 ```
 
+[Pest](https://pest.rs/) is used to parse the *toy* language.
 The full grammar can be found at [parser/src/toy.pest](parser/src/toy.pest).
+
+## Compile and run a .toy program
+
+```
+cargo run -p toy -- test.toy
+```
 
 ## Documentation
 
