@@ -66,11 +66,20 @@ pub struct Thread {
     pub instructions: Vec<Statement>,
 }
 
+/// A thread local variable in *toy*
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogicVar {
+    // The name of the thread
+    pub thread: String,
+    // The variable in the thread
+    pub variable: String,
+}
+
 #[derive(Debug, Clone)]
 pub enum LogicExpr {
     Neg(Box<LogicExpr>),
     And(Box<LogicExpr>, Box<LogicExpr>),
-    Eq(VarInt, VarInt),
+    Eq(LogicVar, LogicVar),
 }
 
 /// A program in *toy* consists of a list of initializations, a list of threads, and an assertion
