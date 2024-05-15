@@ -79,15 +79,17 @@ fn check(program: &Program) {
     todo!()
 }
 
-fn init(statements: &Vec<Statement>, state: &mut State) {
+fn init(statements: &Vec<Init>, state: &mut State) {
     for statement in statements {
-        if let Statement::Assign(x, value) = statement {
-            let value = match value {
-                VarInt::Num(i) => *i,
-                VarInt::Var(x) => state.read(x),
-            };
+        match statement {
+            Init::Assign(x, value) => {
+                let value = match value {
+                    Expr::Num(i) => *i,
+                    Expr::Var(x) => state.read(x),
+                };
 
-            state.write_init(x, value);
+                state.write_init(x, value);
+            }
         }
     }
 }
@@ -96,11 +98,22 @@ fn run_threads(threads: &Vec<Thread>, state: &mut State) {
     todo!()
 }
 
-fn assert(logic_expr: &LogicExpr, state: &State) -> bool {
-    match logic_expr {
-        LogicExpr::Neg(e) => !assert(e.deref(), state),
+fn assert(assert: &Vec<LogicExpr>, state: &State) {
+    for (i, logic_expr) in assert.iter().enumerate() {
+        let result = assert_expr(logic_expr, state);
+        if !result {
+            println!("Assertion failed: {}", i);
+            dbg!(state);
+            dbg!(assert);
+        }
+    }
+}
+
+fn assert_expr(expr: &LogicExpr, state: &State) -> bool {
+    match expr {
+        LogicExpr::Neg(e) => !assert_expr(e.deref(), state),
         LogicExpr::And(e1, e2) => {
-            assert(e1.deref(), state) && assert(e2.deref(), state)
+            assert_expr(e1.deref(), state) && assert_expr(e2.deref(), state)
         }
         LogicExpr::Eq(e1, e2) => {
             let v1 = state.read_local(&e1.thread, &e1.variable);
