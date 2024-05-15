@@ -28,20 +28,19 @@
 /// The type of a variable name in *toy*
 pub type Name = String;
 
-/// A thread local variable in *toy*
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogicVar {
-    // The name of the thread
-    pub thread: String,
-    // The variable in the thread
-    pub variable: String,
+pub enum LogicInt {
+    // Constant, for example `1`
+    Num(u32),
+    // Thread local variable, for example `t1.x`
+    LogicVar(String, String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogicExpr {
     Neg(Box<LogicExpr>),
     And(Box<LogicExpr>, Box<LogicExpr>),
-    Eq(LogicVar, LogicVar),
+    Eq(LogicInt, LogicInt),
 }
 
 /// Four types of fences as defined in figure 7 of Alglave et al., 2017.
@@ -83,7 +82,7 @@ pub enum Statement {
 }
 
 /// A thread in *toy* consists of a name and a list of statements
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Thread {
     /// The name of the thread
     pub name: String,

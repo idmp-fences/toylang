@@ -1,7 +1,9 @@
+mod check;
+
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
 
 use ast::*;
+use crate::check::check;
 
 #[derive(Debug, Clone)]
 enum MemoryModel {
@@ -65,7 +67,7 @@ impl State {
 
 pub fn execute(program: &Program) {
     // Check if program is valid
-    check(program);
+    check(program).unwrap_or_else(|err| panic!("{err:?}"));
 
     // Run the program
     let mut state = State::new(MemoryModel::Sc);
@@ -75,15 +77,11 @@ pub fn execute(program: &Program) {
     assert(&program.assert, &state);
 }
 
-fn check(program: &Program) {
-    todo!()
-}
-
-fn init(statements: &Vec<Init>, state: &mut State) {
+fn init(statements: &[Init], state: &mut State) {
     for statement in statements {
         match statement {
-            Init::Assign(x, value) => {
-                let value = match value {
+            Init::Assign(x, expr) => {
+                let value = match expr {
                     Expr::Num(i) => *i,
                     Expr::Var(x) => state.read(x),
                 };
@@ -94,11 +92,11 @@ fn init(statements: &Vec<Init>, state: &mut State) {
     }
 }
 
-fn run_threads(threads: &Vec<Thread>, state: &mut State) {
+fn run_threads(threads: &[Thread], state: &mut State) {
     todo!()
 }
 
-fn assert(assert: &Vec<LogicExpr>, state: &State) {
+fn assert(assert: &[LogicExpr], state: &State) {
     for (i, logic_expr) in assert.iter().enumerate() {
         let result = assert_expr(logic_expr, state);
         if !result {
@@ -111,15 +109,22 @@ fn assert(assert: &Vec<LogicExpr>, state: &State) {
 
 fn assert_expr(expr: &LogicExpr, state: &State) -> bool {
     match expr {
-        LogicExpr::Neg(e) => !assert_expr(e.deref(), state),
+        LogicExpr::Neg(e) => !assert_expr(e, state),
         LogicExpr::And(e1, e2) => {
-            assert_expr(e1.deref(), state) && assert_expr(e2.deref(), state)
+            assert_expr(e1, state) && assert_expr(e2, state)
         }
         LogicExpr::Eq(e1, e2) => {
-            let v1 = state.read_local(&e1.thread, &e1.variable);
-            let v2 = state.read_local(&e2.thread, &e1.variable);
+            let v1 = assert_logic_int(e1, state);
+            let v2 = assert_logic_int(e2, state);
 
             v1 == v2
         }
+    }
+}
+
+fn assert_logic_int(expr: &LogicInt, state: &State) -> u32 {
+    match expr {
+        LogicInt::Num(i) => *i,
+        LogicInt::LogicVar(thread, variable) => state.read_local(thread, variable),
     }
 }
