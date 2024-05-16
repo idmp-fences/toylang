@@ -68,7 +68,7 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Init {
     /// An assignment, for example `let x: u32 = 3;`
-    Assign(Name, Expr)
+    Assign(Name, Expr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +79,14 @@ pub enum Statement {
     Modify(Name, Expr),
     /// A memory fence, for example `Fence(WR);`
     Fence(FenceType),
+}
+
+impl From<Init> for Statement {
+    fn from(value: Init) -> Self {
+        match value {
+            Init::Assign(name, expr) => Statement::Assign(name, expr),
+        }
+    }
 }
 
 /// A thread in *toy* consists of a name and a list of statements

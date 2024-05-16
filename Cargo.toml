@@ -1,9 +1,9 @@
 [workspace]
-members = ["parser", "interpreter", "ast"]
+members = ["parser", "interpreter", "ast", "aeg"]
 resolver = "2"
 
 # These modules are automatically included in eg `cargo doc` and `cargo test` instead of having to pass --workspace
-default-members = ["parser", "interpreter", "ast"]
+default-members = ["parser", "interpreter", "ast", "aeg"]
 
 [package]
 name = "toy"
