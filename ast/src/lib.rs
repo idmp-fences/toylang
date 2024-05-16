@@ -81,6 +81,14 @@ pub enum Statement {
     Fence(FenceType),
 }
 
+impl From<Init> for Statement {
+    fn from(value: Init) -> Self {
+        match value {
+            Init::Assign(name, expr) => Statement::Assign(name, expr),
+        }
+    }
+}
+
 /// A thread in *toy* consists of a name and a list of statements
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Thread {
