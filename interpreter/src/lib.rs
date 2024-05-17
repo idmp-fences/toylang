@@ -17,7 +17,7 @@ struct State {
     memory_model: MemoryModel,
     global_variables: HashSet<String>,
     memory: HashMap<String, u32>,
-    // TODO: write_buffers: ?,
+    write_buffers: HashMap<String, HashMap<String, u32>>,
 }
 
 impl State {
@@ -26,6 +26,7 @@ impl State {
             memory_model,
             global_variables: HashSet::new(),
             memory: HashMap::new(),
+            write_buffers: HashMap::new(),
         }
     }
 
@@ -38,70 +39,86 @@ impl State {
         self.memory.insert(x.to_string(), value);
     }
 
-    pub fn write(&mut self, x: &str, value: u32) {
-        println!("{}", x);
-        println!("{}", value);
-        println!("{}", "");
-        self.global_variables.insert(x.to_string());
-        self.memory.insert(x.to_string(), value);
-        // match self.memory_model {
-        //     MemoryModel::Sc => {
-        //         self.memory.insert(x.to_string(), value);
-        //     }
-        //     MemoryModel::Tso => {
-        //         todo!()
-        //     }
-        // }
-    }
+    pub fn write(&mut self, x: &str, value: u32, thread: &str,) {
 
-    pub fn write_local(&mut self, thread: &str, x: &str, value: u32) {
-        self.memory.insert(format!("{thread}.{x}"), value);
         match self.memory_model {
             MemoryModel::Sc => {
-                self.write(x, value)
+                self.memory.insert(x.to_string(), value);
             }
             MemoryModel::Tso => {
-                //
+                if let Some(buffer) = self.write_buffers.get_mut("main") {
+                    buffer.insert(x.to_string(), value);
+                } else {
+                    //
+                }
             }
         }
     }
 
-    pub fn read(&self, x: &str) -> u32 {
-        self.memory.get(x).copied().unwrap_or(0)
+    pub fn write_local(&mut self, thread: &str, x: &str, value: u32) {
+        match self.memory_model {
+            MemoryModel::Sc => {
+                self.memory.insert(format!("{thread}.{x}"), value);
+            }
+            MemoryModel::Tso => {
+                if let Some(buffer) = self.write_buffers.get_mut("main") {
+                    buffer.insert(format!("{thread}.{x}"), value);
+                } else {
+                    //
+                }
+            }
+        }
     }
 
-    pub fn read_local(&self, thread: &str, x: &str) -> u32 {
-        self.read(format!("{thread}.{x}").as_str())
+    pub fn read(&mut self, x: &str) -> u32 {
+        match self.memory_model {
+            MemoryModel::Sc => {
+                self.memory.get(x).copied().unwrap_or(0)
+            }
+            MemoryModel::Tso => {
+                if let Some(buffer) = self.write_buffers.get_mut("main") {
+                    buffer.get(x).copied().unwrap_or(0)
+                } else {
+                    99999
+                }
+            }
+        }
+       
+    }
+
+    pub fn read_local(&mut self, thread: &str, x: &str) -> u32 {
+        match self.memory_model {
+            MemoryModel::Sc => {
+                self.read(format!("{thread}.{x}").as_str())
+            }
+            MemoryModel::Tso => {
+                if let Some(buffer) = self.write_buffers.get_mut("main") {
+                    buffer.get(format!("{thread}.{x}").as_str()).copied().unwrap_or(0)
+                } else {
+                    99999
+                }
+            }
+        }
     }
 
     /// Flushes a random thread-local variable to global variables for a specified thread.
     pub fn flush_random_write_buffer(&mut self, thread_name: &str) -> bool {
-        let thread_prefix = format!("{thread_name}.");
-        let thread_variables: Vec<_> = self.memory.iter()
-            .filter(|(key, &value)| {
-                key.starts_with(&thread_prefix) &&  // Check if it's a thread-specific variable
-                self.memory.get(key.split('.').nth(1).unwrap()) != Some(&value)  // Compare values
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
+        if let Some(buffer) = self.write_buffers.get_mut(thread_name) {
+            let keys: Vec<String> = buffer.keys().cloned().collect();
+            if keys.is_empty() {
+                return false; 
+            }
 
-        if thread_variables.is_empty() {
-            return false;  // No variables left to flush
-        }
+            let mut rng = thread_rng();
+            let random_index = rng.gen_range(0..keys.len());
+            let random_key = &keys[random_index];
 
-        // Randomly select one of the filtered keys
-        let mut rng = rand::thread_rng();
-        let random_key = thread_variables[rng.gen_range(0..thread_variables.len())].clone();
-        if let Some(value) = self.memory.get(&random_key) {
-            let global_key = random_key.split('.').nth(1).unwrap().to_string();  // Extract the global variable name
-            // self.memory.insert(global_key, value);  // Move to global memory
-            
-            self.write(&global_key, *value);
-            println!("Global key is: {}", global_key);
-            println!("Is global: {}", self.is_global(&global_key));
+            if let Some(value) = buffer.remove(random_key) {
+                self.memory.insert(random_key.clone(), value);
+                return true; 
+            }
         }
-        
-        true
+        false 
     }
 
     
@@ -122,7 +139,7 @@ pub fn execute(program: &Program, memory_model: MemoryModel) {
 
     init(&program.init, &mut state);
     run_threads(&program.threads, &mut state);
-    assert(&program.assert, &state);
+    assert(&program.assert, &mut state);
 }
 
 fn init(statements: &[Init], state: &mut State) {
@@ -144,6 +161,11 @@ fn run_threads(threads: &[Thread], state: &mut State) {
     let mut rng = rand::thread_rng(); // Create a random number generator
     let mut active_threads = (0..threads.len()).collect::<Vec<_>>(); // Track active threads by their indices
     let mut ip = vec![0; threads.len()]; // Instruction pointers for each thread
+    
+    state.write_buffers.entry("main".to_string()).or_insert_with(HashMap::new);
+    for thread in threads {
+        state.write_buffers.entry(thread.name.clone()).or_insert_with(HashMap::new);
+    }
 
     while !active_threads.is_empty() {
         // Randomly select an active thread
@@ -194,7 +216,7 @@ fn simulate_instruction(instruction: &Statement, thread_name: &str, state: &mut 
     }
 }
 
-fn evaluate_expression(expr: &Expr, state: &State) -> u32 {
+fn evaluate_expression(expr: &Expr, state: &mut State) -> u32 {
     match expr {
         Expr::Num(val) => *val,
         Expr::Var(var) => {
@@ -224,18 +246,18 @@ fn apply_fence(fence_type: &FenceType, state: &mut State, thread_name: &str) {
 }
 
 
-fn assert(assert: &[LogicExpr], state: &State) {
+fn assert(assert: &[LogicExpr], state: &mut State) {
     for (i, logic_expr) in assert.iter().enumerate() {
         let result = assert_expr(logic_expr, state);
         if !result {
             println!("Assertion failed: {}", i);
-            dbg!(state);
-            dbg!(assert);
+            // dbg!(state);
+            // dbg!(assert);
         }
     }
 }
 
-fn assert_expr(expr: &LogicExpr, state: &State) -> bool {
+fn assert_expr(expr: &LogicExpr, state: &mut State) -> bool {
     match expr {
         LogicExpr::Neg(e) => !assert_expr(e, state),
         LogicExpr::And(e1, e2) => {
@@ -250,7 +272,7 @@ fn assert_expr(expr: &LogicExpr, state: &State) -> bool {
     }
 }
 
-fn assert_logic_int(expr: &LogicInt, state: &State) -> u32 {
+fn assert_logic_int(expr: &LogicInt, state: &mut State) -> u32 {
     match expr {
         LogicInt::Num(i) => *i,
         LogicInt::LogicVar(thread, variable) => state.read_local(thread, variable),
@@ -334,9 +356,9 @@ mod tests {
             assert,
         };
         let mut state = State::new(memory_model);
-        state.write("x", 1);
-        state.write("y", 2);
-        state.write("z", 3);
+        state.write("x", 1, "main");
+        state.write("y", 2, "main");
+        state.write("z", 3, "main");
         assert_eq!(state.read("x"),1);
         assert_eq!(state.read("y"),2);
         assert_eq!(state.read("z"),3);
@@ -377,9 +399,9 @@ mod tests {
             assert,
         };
         let mut state = State::new(memory_model);
-        state.write("x", 1);
-        state.write("y", 2);
-        state.write("z", 3);
+        state.write("x", 1, "main");
+        state.write("y", 2, "main");
+        state.write("z", 3, "main");
         assert_eq!(state.read("x"),1);
         assert_eq!(state.read("y"),2);
         assert_eq!(state.read("z"),3);
