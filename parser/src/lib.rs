@@ -43,7 +43,7 @@ pub fn parse(source: &str) -> Result<Program, Error<Rule>> {
             }
             Rule::r#final => {
                 for inner_pair in pair.into_inner() {
-                    match inner_pair.as_rule() {
+                    match inner_pair.as_rule() { 
                         Rule::assert => {
                             assert.push(parse_logic_expr(inner_pair));
                         }
@@ -111,7 +111,52 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> Statement {
 }
 
 fn parse_logic_expr(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
-    todo!()
+    let mut pairs = pair.into_inner();
+    let mut expr = parse_atom(pairs.next().unwrap());
+    while let Some(op_pair) = pairs.next() {
+        if op_pair.as_str() == "&&" {
+            let next_atom = parse_atom(pairs.next().unwrap());
+            expr = LogicExpr::And(Box::new(expr), Box::new(next_atom));
+        } else {
+            unreachable!();
+        }
+    }
+    expr
+}
+
+fn parse_atom(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
+    match pair.as_rule() {
+        Rule::atom => {
+            let inner_pair = pair.into_inner().next().unwrap();
+            match inner_pair.as_rule() {
+                Rule::logicexpr => {
+                    let inner_expr = parse_logic_expr(inner_pair);
+                    LogicExpr::Neg(Box::new(inner_expr))
+                }
+                Rule::logicint => {
+                    let mut inner_pairs = inner_pair.into_inner();
+                    let left = parse_logic_int(inner_pairs.next().unwrap());
+                    let right = parse_logic_int(inner_pairs.next().unwrap());
+                    LogicExpr::Eq(left, right)
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn parse_logic_int(pair: pest::iterators::Pair<Rule>) -> LogicInt {
+    match pair.as_rule() {
+        Rule::num => LogicInt::Num(pair.as_str().parse().unwrap()),
+        Rule::logicvar => {
+            let mut inner_pairs = pair.into_inner();
+            let thread = inner_pairs.as_str().to_owned();
+            let var = inner_pairs.as_str().to_owned();
+            LogicInt::LogicVar(thread, var)
+        }
+        _ => unreachable!(),
+    }
 }
 
 #[cfg(test)]
@@ -187,5 +232,25 @@ mod tests {
         "#;
         let program = parse(source).unwrap();
         dbg!(program);
+    }
+
+    #[test]
+    fn parse_logic_expr_and() {
+        let source = "t1.a == 0 && t2.b == 1";
+        let mut pairs = ToyParser::parse(Rule::logicexpr, source).unwrap();
+        let expr = parse_logic_expr(pairs.next().unwrap());
+        assert_eq!(
+            expr,
+            LogicExpr::And(
+                Box::new(LogicExpr::Eq(
+                    LogicInt::LogicVar("t1".to_owned(), "a".to_owned()),
+                    LogicInt::Num(0)
+                )),
+                Box::new(LogicExpr::Eq(
+                    LogicInt::LogicVar("t2".to_owned(), "b".to_owned()),
+                    LogicInt::Num(1)
+                ))
+            )
+        );
     }
 }
