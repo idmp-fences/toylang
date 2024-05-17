@@ -2,7 +2,7 @@
 //!
 //! A [Program] in *toy* consists of a list of initializations ([Statement]s), a list of [Thread]s, and an assertion ([`LogicExpr`]).
 //!
-//! ```
+//! ```text
 //! // Initialization
 //! let x: u32 = 0;
 //! let y: u32 = 0;
@@ -68,7 +68,7 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Init {
     /// An assignment, for example `let x: u32 = 3;`
-    Assign(Name, Expr)
+    Assign(Name, Expr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

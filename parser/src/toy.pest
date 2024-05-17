@@ -15,11 +15,16 @@ expr        =  { name | num }
 fencemarker =  { "WR" | "WW" | "RW" | "RR" }
 
 assert      =  { "assert" ~ "(" ~ logicexpr ~ ")" ~ ";" }
+
 atom  =  {
-    "!" ~ logicexpr
-  | "(" ~ logicexpr ~ ")"
-  | logicint ~ "==" ~ logicint
+    neg
+  | paren
+  | eq
 }
+neg = { "!" ~ logicexpr }
+paren = { "(" ~ logicexpr ~ ")" }
+eq = { logicint ~ "==" ~ logicint }
+
 // '&&' has lowest precedence
 logicexpr = { atom ~ ("&&" ~ atom)* } 
 
