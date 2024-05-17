@@ -34,7 +34,7 @@ pub fn parse(source: &str) -> Result<Program, Error<Rule>> {
                 for inner_pair in pair {
                     match inner_pair.as_rule() {
                         Rule::stmt => {
-                            thread.instructions.push(parse_statement(inner_pair.into_inner().next().unwrap()));
+                            thread.instructions.push(parse_statement(inner_pair));
                         }
                         _ => unreachable!(),
                     }
@@ -43,9 +43,9 @@ pub fn parse(source: &str) -> Result<Program, Error<Rule>> {
             }
             Rule::r#final => {
                 for inner_pair in pair.into_inner() {
-                    match inner_pair.as_rule() { 
+                    match inner_pair.as_rule() {
                         Rule::assert => {
-                            assert.push(parse_logic_expr(inner_pair));
+                            assert.push(parse_logic_expr(inner_pair.into_inner().next().unwrap()));
                         }
                         _ => unreachable!(),
                     }
@@ -62,36 +62,46 @@ pub fn parse(source: &str) -> Result<Program, Error<Rule>> {
 }
 
 fn parse_expression(pair: pest::iterators::Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::expr);
+
+    let pair = pair.into_inner().next().unwrap();
+
     match pair.as_rule() {
         Rule::name => Expr::Var(pair.as_str().to_owned()),
         Rule::num => Expr::Num(pair.as_str().parse().unwrap()),
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 
 // Match something that is an assignment
 fn parse_init(pair: pest::iterators::Pair<Rule>) -> Init {
+    debug_assert_eq!(pair.as_rule(), Rule::assign);
+
     let mut pair = pair.into_inner();
     let lhs = pair.next().unwrap();
-    let rhs = pair.next().unwrap().into_inner().next().unwrap();
+    let rhs = pair.next().unwrap();
     let rhs = parse_expression(rhs);
     Init::Assign(lhs.as_str().to_owned(), rhs)
 }
 
 // Match something that is modify/assign/fence
 fn parse_statement(pair: pest::iterators::Pair<Rule>) -> Statement {
+    debug_assert_eq!(pair.as_rule(), Rule::stmt);
+
+    let pair = pair.into_inner().next().unwrap();
+
     match pair.as_rule() {
         Rule::assign => {
             let mut pair = pair.into_inner();
             let lhs = pair.next().unwrap();
-            let rhs = pair.next().unwrap().into_inner().next().unwrap();
+            let rhs = pair.next().unwrap();
             let rhs = parse_expression(rhs);
             Statement::Assign(lhs.as_str().to_owned(), rhs)
         }
         Rule::modify => {
             let mut pair = pair.into_inner();
             let lhs = pair.next().unwrap();
-            let rhs = pair.next().unwrap().into_inner().next().unwrap();
+            let rhs = pair.next().unwrap();
             let rhs = parse_expression(rhs);
             Statement::Modify(lhs.as_str().to_owned(), rhs)
         }
@@ -106,56 +116,87 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> Statement {
             };
             Statement::Fence(fence)
         }
-        _ => unreachable!(),
+        _ => unreachable!(
+            "Expected assign, modify, or fence, got {:?}",
+            pair.as_rule()
+        ),
     }
 }
 
+/// Parse a logic expression
+/// ```text
+/// logicexpr = { atom ~ ("&&" ~ atom)* }
+/// ```
 fn parse_logic_expr(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
+    debug_assert_eq!(pair.as_rule(), Rule::logicexpr);
+
     let mut pairs = pair.into_inner();
     let mut expr = parse_atom(pairs.next().unwrap());
+    // If there is more than 1 token, we need to chain them with And
     while let Some(op_pair) = pairs.next() {
-        if op_pair.as_str() == "&&" {
-            let next_atom = parse_atom(pairs.next().unwrap());
-            expr = LogicExpr::And(Box::new(expr), Box::new(next_atom));
-        } else {
-            unreachable!();
-        }
+        let next_atom = parse_atom(op_pair);
+        expr = LogicExpr::And(Box::new(expr), Box::new(next_atom));
     }
     expr
 }
 
+/// Parse an atom
+/// ```text
+/// atom  =  {
+///     neg
+///   | paren
+///   | eq
+/// }
+/// ```
 fn parse_atom(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
-    match pair.as_rule() {
-        Rule::atom => {
-            let inner_pair = pair.into_inner().next().unwrap();
-            match inner_pair.as_rule() {
-                Rule::logicexpr => {
-                    let inner_expr = parse_logic_expr(inner_pair);
-                    LogicExpr::Neg(Box::new(inner_expr))
-                }
-                Rule::logicint => {
-                    let mut inner_pairs = inner_pair.into_inner();
-                    let left = parse_logic_int(inner_pairs.next().unwrap());
-                    let right = parse_logic_int(inner_pairs.next().unwrap());
-                    LogicExpr::Eq(left, right)
-                }
-                _ => unreachable!(),
-            }
+    debug_assert_eq!(
+        pair.as_rule(),
+        Rule::atom,
+        "Expected atom, got {:?}",
+        pair.as_rule()
+    );
+
+    let inner_pair = pair.into_inner().next().unwrap();
+    match inner_pair.as_rule() {
+        // starting with a logicint means we are comparing equality
+        Rule::eq => {
+            let mut inner_pairs = inner_pair.into_inner();
+            let left = parse_logic_int(inner_pairs.next().unwrap());
+            let right = parse_logic_int(inner_pairs.next().unwrap());
+            LogicExpr::Eq(left, right)
         }
-        _ => unreachable!(),
+        Rule::neg => {
+            let inner_expr = parse_logic_expr(inner_pair.into_inner().next().unwrap());
+            LogicExpr::Neg(Box::new(inner_expr))
+        }
+        Rule::paren => parse_logic_expr(inner_pair.into_inner().next().unwrap()),
+        _ => unreachable!("Expected eq, neg, or paren, got {:?}", inner_pair.as_rule()),
     }
 }
 
+/// Parse a logicint
 fn parse_logic_int(pair: pest::iterators::Pair<Rule>) -> LogicInt {
-    match pair.as_rule() {
-        Rule::num => LogicInt::Num(pair.as_str().parse().unwrap()),
+    debug_assert_eq!(
+        pair.as_rule(),
+        Rule::logicint,
+        "Expected logicint, got {:?}",
+        pair.as_rule()
+    );
+
+    let inner = pair.into_inner().next().unwrap();
+    match inner.as_rule() {
+        Rule::num => LogicInt::Num(inner.as_str().parse().unwrap()),
         Rule::logicvar => {
-            let mut inner_pairs = pair.into_inner();
-            let thread = inner_pairs.as_str().to_owned();
-            let var = inner_pairs.as_str().to_owned();
-            LogicInt::LogicVar(thread, var)
+            if let Some((thread, var)) = inner.as_str().split_once('.') {
+                LogicInt::LogicVar(thread.to_owned(), var.to_owned())
+            } else {
+                unreachable!(
+                    "A logicvar is always a {{ name ~ \".\" ~ name }}, got {:?}",
+                    inner.as_str()
+                )
+            }
         }
-        _ => unreachable!(),
+        _ => unreachable!("Expected num or logicvar, got {:?}", inner.as_rule()),
     }
 }
 
@@ -167,7 +208,7 @@ mod tests {
     fn parse_expr_num() {
         let source = "42";
         let mut program = ToyParser::parse(Rule::expr, source).unwrap();
-        let expr = parse_expression(program.next().unwrap().into_inner().next().unwrap());
+        let expr = parse_expression(program.next().unwrap());
         assert_eq!(expr, Expr::Num(42));
     }
 
@@ -175,7 +216,7 @@ mod tests {
     fn parse_expr_var() {
         let source = "x";
         let mut program = ToyParser::parse(Rule::expr, source).unwrap();
-        let expr = parse_expression(program.next().unwrap().into_inner().next().unwrap());
+        let expr = parse_expression(program.next().unwrap());
         assert_eq!(expr, Expr::Var("x".to_owned()));
     }
 
@@ -191,7 +232,7 @@ mod tests {
     fn parse_assign() {
         let source = "let hello: u32 = 42;";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
-        let stmt = parse_statement(program.next().unwrap().into_inner().next().unwrap());
+        let stmt = parse_statement(program.next().unwrap());
         assert_eq!(stmt, Statement::Assign("hello".to_owned(), Expr::Num(42)));
     }
 
@@ -199,15 +240,15 @@ mod tests {
     fn parse_modify() {
         let source = "y = 33;";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
-        let stmt = parse_statement(program.next().unwrap().into_inner().next().unwrap());
-        assert_eq!(stmt, Statement::Assign("y".to_owned(), Expr::Num(33)));
+        let stmt = parse_statement(program.next().unwrap());
+        assert_eq!(stmt, Statement::Modify("y".to_owned(), Expr::Num(33)));
     }
 
     #[test]
     fn parse_fence() {
         let source = "Fence(WR);";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
-        let stmt = parse_statement(program.next().unwrap().into_inner().next().unwrap());
+        let stmt = parse_statement(program.next().unwrap());
         assert_eq!(stmt, Statement::Fence(FenceType::WR));
     }
 
