@@ -50,7 +50,7 @@ pub fn create_aeg(program: &Program) -> Aeg {
     // Start with the init block
     for init in &program.init {
         let stmt = Statement::from(init.clone());
-        handle_statment(&mut g, &mut last_node, &stmt);
+        handle_statment(&mut g, &mut last_node, &stmt, &vec![]);
     }
 
     let last_init_node = last_node.unwrap();
@@ -62,7 +62,8 @@ pub fn create_aeg(program: &Program) -> Aeg {
         let mut read_nodes = vec![];
         let mut write_nodes = vec![];
         for stmt in &thread.instructions {
-            let (write, read) = handle_statment(&mut g, &mut last_node, stmt);
+            let (write, read) =
+                handle_statment(&mut g, &mut last_node, stmt, program.global_vars.as_ref());
             if write.is_some() {
                 write_nodes.push(write.unwrap());
             }
@@ -97,20 +98,28 @@ pub fn create_aeg(program: &Program) -> Aeg {
 }
 
 /// Adds the corresponding nodes for a statement to the AEG, and returns the (write, read) nodes.
-/// todo: only return global read/write nodes as they are the only ones that can conflict.
+/// Only the global read/write nodes are returned as they are the only ones that can create competing edges.
+/// The local read/write nodes are not returned as they are not relevant for the competing edge calculation.
 fn handle_statment(
     graph: &mut Aeg,
     last_node: &mut Option<NodeIndex>,
     stmt: &Statement,
+    globals: &Vec<String>,
 ) -> (Option<NodeIndex>, Option<NodeIndex>) {
     match stmt {
-        Statement::Modify(var, Expr::Num(_)) | Statement::Assign(var, Expr::Num(_)) => {
-            let lhs: NodeIndex = graph.add_node(Node::Write(var.clone()));
+        Statement::Modify(vwrite, Expr::Num(_)) | Statement::Assign(vwrite, Expr::Num(_)) => {
+            let lhs: NodeIndex = graph.add_node(Node::Write(vwrite.clone()));
             if last_node.is_some() {
                 graph.add_edge(last_node.unwrap(), lhs, AegEdge::ProgramOrder);
             }
             *last_node = Some(lhs);
-            (Some(lhs), None)
+
+            // If the variable is a global, return the write node
+            if globals.contains(vwrite) {
+                (Some(lhs), None)
+            } else {
+                (None, None)
+            }
         }
         Statement::Modify(vwrite, Expr::Var(vread))
         | Statement::Assign(vwrite, Expr::Var(vread)) => {
@@ -126,7 +135,19 @@ fn handle_statment(
             }
             graph.add_edge(rhs, lhs, AegEdge::ProgramOrder);
             *last_node = Some(lhs);
-            (Some(lhs), Some(rhs))
+
+            // If the variable is a global, return the write node
+            let lhs = if globals.contains(vwrite) {
+                Some(lhs)
+            } else {
+                None
+            };
+            let rhs = if globals.contains(vread) {
+                Some(rhs)
+            } else {
+                None
+            };
+            (lhs, rhs)
         }
         Statement::Fence(FenceType::WR) => {
             let f = graph.add_node(Node::Fence(Fence::Full));
@@ -184,6 +205,7 @@ mod tests {
             ],
             threads: vec![],
             assert: vec![LogicExpr::Eq(LogicInt::Num(1), LogicInt::Num(1))],
+            global_vars: vec!["x".to_string(), "y".to_string(), "z".to_string()],
         };
 
         let aeg = create_aeg(&program);
@@ -222,6 +244,7 @@ mod tests {
                 },
             ],
             assert: vec![LogicExpr::Eq(LogicInt::Num(1), LogicInt::Num(1))],
+            global_vars: vec!["x".to_string(), "y".to_string()],
         };
 
         let aeg = create_aeg(&program);
@@ -270,6 +293,7 @@ mod tests {
                 LogicInt::LogicVar("t1".to_string(), "a".to_string()),
                 LogicInt::LogicVar("t2".to_string(), "a".to_string()),
             )],
+            global_vars: vec!["x".to_string()],
         };
 
         let aeg = dbg!(create_aeg(&program));
