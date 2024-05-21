@@ -104,4 +104,6 @@ pub struct Program {
     pub init: Vec<Init>,
     pub threads: Vec<Thread>,
     pub assert: Vec<LogicExpr>,
+    /// Global variables that are shared between threads, all other variables are thread local
+    pub global_vars: Vec<Name>,
 }
