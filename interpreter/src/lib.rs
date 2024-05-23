@@ -99,7 +99,7 @@ impl State {
             }
             MemoryModel::Tso => {
                 if let Some(buffer) = self.write_buffers.get_mut(thread) {
-                    if buffer.contains_key(x) {
+                    if buffer.contains_key(format!("{thread}.{x}").as_str()) {
                         buffer.get(format!("{thread}.{x}").as_str()).copied().unwrap_or(0)
                     } else {
                         self.read(format!("{thread}.{x}").as_str(), thread)
@@ -312,6 +312,36 @@ fn print_memory(memory: &HashMap<String, u32>) {
 #[cfg(test)]
 mod tests {
     use super::*;  // Import necessary components from the outer module
+
+    #[test]
+    fn test_local_global_vars() {
+        let memory_model = MemoryModel::Tso;
+        let init = vec![
+            Init::Assign("x".to_string(), Expr::Num(10)), 
+        ];
+        let threads = vec![
+            Thread {
+                name: "t1".to_string(),
+                instructions: vec![
+                    Statement::Assign("x".to_string(), Expr::Num(100)),
+                ],
+            }
+        ];
+        let assert = vec![];
+
+        let program = Program {
+            init,
+            threads,
+            assert,
+        };
+        let mut state = State::new(memory_model);
+        crate::init(&program.init, &mut state);
+        run_threads(&program.threads, &mut state);
+
+
+        assert_eq!(state.read("x", "main"),10);
+        assert_eq!(state.read_local("t1","x"),100);
+    }
 
     #[test]
     fn test_read_writes() {
