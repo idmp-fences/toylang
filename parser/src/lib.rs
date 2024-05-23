@@ -12,6 +12,7 @@ pub fn parse(source: &str) -> Result<Program, Error<Rule>> {
     let mut init = Vec::new();
     let mut threads = Vec::new();
     let mut assert = Vec::new();
+    let mut global_vars = Vec::new();
     for pair in pairs {
         // A pair is a combination of the rule which matched and a span of input
         match pair.as_rule() {
@@ -19,7 +20,12 @@ pub fn parse(source: &str) -> Result<Program, Error<Rule>> {
                 for inner_pair in pair.into_inner() {
                     match inner_pair.as_rule() {
                         Rule::assign => {
-                            init.push(parse_init(inner_pair));
+                            let statement = parse_init(inner_pair);
+                            let name = match &statement {
+                                Init::Assign(name, _) => name.clone(),
+                            };
+                            global_vars.push(name);
+                            init.push(statement);
                         }
                         _ => unreachable!(),
                     }
@@ -34,7 +40,9 @@ pub fn parse(source: &str) -> Result<Program, Error<Rule>> {
                 for inner_pair in pair {
                     match inner_pair.as_rule() {
                         Rule::stmt => {
-                            thread.instructions.push(parse_statement(inner_pair));
+                            thread
+                                .instructions
+                                .push(parse_statement(inner_pair, &global_vars));
                         }
                         _ => unreachable!(),
                     }
@@ -58,6 +66,7 @@ pub fn parse(source: &str) -> Result<Program, Error<Rule>> {
         init,
         threads,
         assert,
+        global_vars,
     })
 }
 
@@ -85,7 +94,7 @@ fn parse_init(pair: pest::iterators::Pair<Rule>) -> Init {
 }
 
 // Match something that is modify/assign/fence
-fn parse_statement(pair: pest::iterators::Pair<Rule>) -> Statement {
+fn parse_statement(pair: pest::iterators::Pair<Rule>, globals: &Vec<Name>) -> Statement {
     debug_assert_eq!(pair.as_rule(), Rule::stmt);
 
     let pair = pair.into_inner().next().unwrap();
@@ -93,17 +102,20 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> Statement {
     match pair.as_rule() {
         Rule::assign => {
             let mut pair = pair.into_inner();
-            let lhs = pair.next().unwrap();
+            let lhs = pair.next().unwrap().as_str().to_owned();
             let rhs = pair.next().unwrap();
             let rhs = parse_expression(rhs);
-            Statement::Assign(lhs.as_str().to_owned(), rhs)
+            if globals.contains(&lhs) {
+                panic!("Cannot shadow global variable `{lhs}` (you can modify it instead, e.g. `x = 3;`)")
+            }
+            Statement::Assign(lhs, rhs)
         }
         Rule::modify => {
             let mut pair = pair.into_inner();
-            let lhs = pair.next().unwrap();
+            let lhs = pair.next().unwrap().as_str().to_owned();
             let rhs = pair.next().unwrap();
             let rhs = parse_expression(rhs);
-            Statement::Modify(lhs.as_str().to_owned(), rhs)
+            Statement::Modify(lhs, rhs)
         }
         Rule::fence => {
             let fence = pair.into_inner().next().unwrap();
@@ -232,7 +244,7 @@ mod tests {
     fn parse_assign() {
         let source = "let hello: u32 = 42;";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
-        let stmt = parse_statement(program.next().unwrap());
+        let stmt = parse_statement(program.next().unwrap(), &vec![]);
         assert_eq!(stmt, Statement::Assign("hello".to_owned(), Expr::Num(42)));
     }
 
@@ -240,7 +252,7 @@ mod tests {
     fn parse_modify() {
         let source = "y = 33;";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
-        let stmt = parse_statement(program.next().unwrap());
+        let stmt = parse_statement(program.next().unwrap(), &vec![]);
         assert_eq!(stmt, Statement::Modify("y".to_owned(), Expr::Num(33)));
     }
 
@@ -248,7 +260,7 @@ mod tests {
     fn parse_fence() {
         let source = "Fence(WR);";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
-        let stmt = parse_statement(program.next().unwrap());
+        let stmt = parse_statement(program.next().unwrap(), &vec![]);
         assert_eq!(stmt, Statement::Fence(FenceType::WR));
     }
 
@@ -273,6 +285,22 @@ mod tests {
         "#;
         let program = parse(source).unwrap();
         dbg!(program);
+    }
+
+    #[test]
+    #[should_panic]
+    #[allow(unused_must_use)]
+    fn panics_on_shadow() {
+        let source = r#"
+        let x: u32 = 0;
+        thread t1 {
+            let x: u32 = 1;
+        }
+        final {
+            assert( !( t1.a == 0 && t2.b == 0 ) );
+        }
+        "#;
+        parse(source);
     }
 
     #[test]
