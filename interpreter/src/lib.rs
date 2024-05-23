@@ -62,14 +62,7 @@ impl State {
             }
             MemoryModel::Tso => {
                 if let Some(buffer) = self.write_buffers.get_mut(thread) {
-                    if (buffer.contains_key(x)) {
-                        buffer.insert(format!("{thread}.{x}"), value);
-                    } else {
-                        self.write(x, value, thread);
-                        println!("{}", "bad news");
-                    }
-                    
-                    print_thread_data(&self.write_buffers, thread);
+                    buffer.insert(format!("{thread}.{x}"), value);
                 } else {
                     //
                 }
@@ -83,13 +76,10 @@ impl State {
                 self.memory.get(x).copied().unwrap_or(0)
             }
             MemoryModel::Tso => {
-                // print_thread_data(&self.write_buffers, thread);
                 if let Some(buffer) = self.write_buffers.get_mut(thread) {
                     if buffer.contains_key(x) {
                         buffer.get(x).copied().unwrap_or(0)
                     } else {
-                        // println!("x is: {}", x);
-                        // println!("thread is: {}", thread);
                         self.memory.get(x).copied().unwrap_or(0)
                     }
                     
@@ -108,8 +98,6 @@ impl State {
                 self.read(format!("{thread}.{x}").as_str(), thread)
             }
             MemoryModel::Tso => {
-                // println!("x is: {}", x);
-                // println!("thread is: {}", thread);
                 if let Some(buffer) = self.write_buffers.get_mut(thread) {
                     if buffer.contains_key(x) {
                         buffer.get(format!("{thread}.{x}").as_str()).copied().unwrap_or(0)
@@ -201,9 +189,7 @@ fn run_threads(threads: &[Thread], state: &mut State) {
 
             // Check if this thread has completed all its instructions
             if ip[thread_idx] >= threads[thread_idx].instructions.len() {
-                // println!("{}", "Flushing");
                 state.flush_write_buffer(&threads[thread_idx].name);
-                print_memory(&state.memory);
                 active_threads.swap_remove(idx); // Remove the thread from the active list
             }
         }
@@ -214,29 +200,26 @@ fn simulate_instruction(instruction: &Statement, thread_name: &str, state: &mut 
     match instruction {
         Statement::Modify(var, expr) => {
             let value = evaluate_expression(expr, state, thread_name);
-            state.write_local(thread_name, var, value); // Modify the global variable
+            if state.memory.contains_key(format!("{thread_name}.{var}").as_str()) {
+                state.write_local(thread_name, var, value); // Modify the global variable
+            } else {
+                state.write(var, value, thread_name);
+            }
+            
         },
         Statement::Assign(var, expr) => {
             let value = evaluate_expression(expr, state, thread_name);
-            if let Some(buffer) = state.write_buffers.get_mut(thread_name) {
-                buffer.insert(format!("{thread_name}.{var}"), 0u32);
-            }
-            // (&state.write_buffers.get_mut(thread_name)).insert(format!("{thread_name}.{var}"));
             state.write_local(thread_name, var, value); // Assign to a local/thread-specific variable
-            // print_thread_data(&state.write_buffers, thread_name)
         },
         Statement::Fence(fence_type) => {
-            // println!("{}", "Trying");
             apply_fence(fence_type, state, thread_name); // Apply the specified fence
-            // print_thread_data(&state.write_buffers, thread_name)
             
         },
     }
-
      // With a 25% chance, flush one random write buffer item
     match state.memory_model {
         MemoryModel::Sc => {
-            // self.memory.insert(x.to_string(), value);
+            // 
         }
         MemoryModel::Tso => {
             let mut rng = rand::thread_rng();
@@ -251,14 +234,11 @@ fn evaluate_expression(expr: &Expr, state: &mut State, thread_name: &str) -> u32
     match expr {
         Expr::Num(val) => *val,
         Expr::Var(var) => {
-            // println!("Var is: {}", var);
             if var.contains('.') {
                 let parts: Vec<&str> = var.split('.').collect();
-                // println!("{}", parts[0]);
                 state.read_local(parts[0], parts[1])
             } 
             else if state.memory.contains_key(&[thread_name,".",var].join("")) {
-                // println!("Calling {}", &[thread_name,".",var].join(""));
                 state.read_local(thread_name, var)
             } else {
                 state.read(var, thread_name)
@@ -285,7 +265,6 @@ fn assert(assert: &[LogicExpr], state: &mut State) {
     for (i, logic_expr) in assert.iter().enumerate() {
         let result = assert_expr(logic_expr, state);
         if !result {
-            // println!("Assertion failed: {}", i);
             // dbg!(state);
             // dbg!(assert);
         }
@@ -346,12 +325,12 @@ mod tests {
                     Statement::Assign("y".to_string(), Expr::Num(20)),
                     Statement::Assign("z".to_string(), Expr::Num(30)),
                     Statement::Fence(FenceType::WR),
-                    Statement::Assign("x".to_string(), Expr::Num(100)),
-                    Statement::Assign("y".to_string(), Expr::Num(200)),
-                    Statement::Assign("z".to_string(), Expr::Num(300)),
-                    Statement::Assign("fencedX".to_string(), Expr::Var("x".to_string())),
-                    Statement::Assign("fencedY".to_string(), Expr::Var("y".to_string())),
-                    Statement::Assign("fencedZ".to_string(), Expr::Var("z".to_string())),
+                    Statement::Modify("x".to_string(), Expr::Num(100)),
+                    Statement::Modify("y".to_string(), Expr::Num(200)),
+                    Statement::Modify("z".to_string(), Expr::Num(300)),
+                    Statement::Assign("fencedX".to_string(), Expr::Var("t1.x".to_string())),
+                    Statement::Assign("fencedY".to_string(), Expr::Var("t1.y".to_string())),
+                    Statement::Assign("fencedZ".to_string(), Expr::Var("t1.z".to_string())),
                 ],
             }
         ];
@@ -412,23 +391,15 @@ mod tests {
         if let Some(buffer) = state.write_buffers.get_mut("t1") {
             buffer.insert(format!("x"), 0u32);
         }
-        // print_thread_data(&state.write_buffers, "t1");
         state.write("x", 1, "main");
-        // print_thread_data(&state.write_buffers, "t1");
         state.write("y", 2, "main");
-        // print_thread_data(&state.write_buffers, "t1");
         state.write("z", 3, "main");
-        // print_thread_data(&state.write_buffers, "t1");
-        // print_thread_data(&state.write_buffers, "main");
-        // print_memory(&state.memory);
         assert_eq!(state.read("x", "main"),1);
         assert_eq!(state.read("y", "main"),2);
         assert_eq!(state.read("z", "main"),3);
         state.write_local("t1","x", 11);
-        print_thread_data(&state.write_buffers, "t1");
         assert_eq!(state.read("x", "main"),1);
         assert_ne!(state.read("t1.x", "main"),11);
-        print_thread_data(&state.write_buffers, "t1");
         state.flush_write_buffer("t1");
         assert_eq!(state.read("t1.x", "main"),11);
     }
