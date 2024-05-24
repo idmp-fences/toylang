@@ -1,6 +1,6 @@
 mod check;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use rand::{Rng, thread_rng};
 
 use ast::*;
@@ -13,11 +13,39 @@ enum MemoryModel {
 }
 
 #[derive(Debug, Clone)]
+struct FifoMap<K, V> {
+    map: HashMap<K, V>,
+    order: VecDeque<K>,
+}
+
+impl<K: Eq + Clone + std::hash::Hash, V> FifoMap<K, V> {
+    fn new() -> Self {
+        FifoMap {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn insert(&mut self, key: K, value: V) {
+        if self.map.insert(key.clone(), value).is_none() {
+            self.order.push_back(key);
+        }
+    }
+
+    fn remove(&mut self) -> Option<(K, V)> {
+        if let Some(key) = self.order.pop_front() {
+            self.map.remove(&key).map(|value| (key, value))
+        } else {
+            None
+        }
+    }
+}
+
 struct State {
     memory_model: MemoryModel,
     global_variables: HashSet<String>,
     memory: HashMap<String, u32>,
-    write_buffers: HashMap<String, HashMap<String, u32>>,
+    write_buffers: HashMap<String, FifoMap<String, u32>>,
 }
 
 impl State {
@@ -48,8 +76,6 @@ impl State {
             MemoryModel::Tso => {
                 if let Some(buffer) = self.write_buffers.get_mut(thread) {
                     buffer.insert(x.to_string(), value);
-                } else {
-                    self.memory.insert(x.to_string(), value);
                 }
             }
         }
@@ -61,72 +87,38 @@ impl State {
                 self.memory.insert(format!("{thread}.{x}"), value);
             }
             MemoryModel::Tso => {
-                if let Some(buffer) = self.write_buffers.get_mut(thread) {
-                    buffer.insert(format!("{thread}.{x}"), value);
-                } else {
-                    //
-                }
+                self.memory.insert(format!("{thread}.{x}"), value);
             }
         }
     }
 
-    pub fn read(&mut self, x: &str, thread: &str) -> u32 {
+    pub fn read(&self, x: &str) -> u32 {
         match self.memory_model {
             MemoryModel::Sc => {
                 self.memory.get(x).copied().unwrap_or(0)
             }
             MemoryModel::Tso => {
-                if let Some(buffer) = self.write_buffers.get_mut(thread) {
-                    if buffer.contains_key(x) {
-                        buffer.get(x).copied().unwrap_or(0)
-                    } else {
-                        self.memory.get(x).copied().unwrap_or(0)
-                    }
-                    
-                } else {
-                    // this happens when main thread executes
-                    self.memory.get(x).copied().unwrap_or(0)
-                }
+                self.memory.get(x).copied().unwrap_or(0)
             }
         }
        
     }
 
-    pub fn read_local(&mut self, thread: &str, x: &str) -> u32 {
+    pub fn read_local(&self, thread: &str, x: &str) -> u32 {
         match self.memory_model {
             MemoryModel::Sc => {
                 self.read(format!("{thread}.{x}").as_str(), thread)
             }
             MemoryModel::Tso => {
-                if let Some(buffer) = self.write_buffers.get_mut(thread) {
-                    if buffer.contains_key(format!("{thread}.{x}").as_str()) {
-                        buffer.get(format!("{thread}.{x}").as_str()).copied().unwrap_or(0)
-                    } else {
-                        self.read(format!("{thread}.{x}").as_str(), thread)
-                    }
-                } else {
-                    self.read(format!("{thread}.{x}").as_str(), thread)
-                }
+                self.read(format!("{thread}.{x}").as_str(), thread)
             }
         }
     }
 
     /// Flushes a random thread-local variable to global variables for a specified thread.
-    pub fn flush_random_write_buffer(&mut self, thread_name: &str) -> bool {
+    pub fn flush_single_write_buffer(&mut self, thread_name: &str) -> bool {
         if let Some(buffer) = self.write_buffers.get_mut(thread_name) {
-            let keys: Vec<String> = buffer.keys().cloned().collect();
-            if keys.is_empty() {
-                return false; 
-            }
-
-            let mut rng = thread_rng();
-            let random_index = rng.gen_range(0..keys.len());
-            let random_key = &keys[random_index];
-
-            if let Some(value) = buffer.remove(random_key) {
-                self.memory.insert(random_key.clone(), value);
-                return true; 
-            }
+            buffer.remove();
         }
         false 
     }
@@ -134,8 +126,8 @@ impl State {
     
     /// Continues to flush random write buffers for a specific thread until all are flushed.
     pub fn flush_write_buffer(&mut self, thread_name: &str) {
-        while self.flush_random_write_buffer(thread_name) {
-            // Keep flushing while there are buffer variables
+        while self.flush_single_write_buffer(thread_name) {
+            
         }
     }
 }
@@ -158,7 +150,7 @@ fn init(statements: &[Init], state: &mut State) {
             Init::Assign(x, expr) => {
                 let value = match expr {
                     Expr::Num(i) => *i,
-                    Expr::Var(x) => state.read(x, "main"),
+                    Expr::Var(x) => state.read(x),
                 };
 
                 state.write_init(x, value);
@@ -173,7 +165,7 @@ fn run_threads(threads: &[Thread], state: &mut State) {
     let mut ip = vec![0; threads.len()]; // Instruction pointers for each thread
     
     for thread in threads {
-        state.write_buffers.entry(thread.name.clone()).or_insert_with(HashMap::new);
+        state.write_buffers.entry(thread.name.clone()).or_insert_with(FifoMap::new);
     }
 
     while !active_threads.is_empty() {
@@ -189,7 +181,6 @@ fn run_threads(threads: &[Thread], state: &mut State) {
 
             // Check if this thread has completed all its instructions
             if ip[thread_idx] >= threads[thread_idx].instructions.len() {
-                state.flush_write_buffer(&threads[thread_idx].name);
                 active_threads.swap_remove(idx); // Remove the thread from the active list
             }
         }
@@ -224,7 +215,7 @@ fn simulate_instruction(instruction: &Statement, thread_name: &str, state: &mut 
         MemoryModel::Tso => {
             let mut rng = rand::thread_rng();
             if rng.gen::<f64>() < 0.25 {
-                state.flush_random_write_buffer(thread_name);  // Ensure flush_random_write_buffer accepts thread_name
+                state.flush_single_write_buffer(thread_name);  // Ensure flush_random_write_buffer accepts thread_name
             }
         }
     }
@@ -261,7 +252,7 @@ fn apply_fence(fence_type: &FenceType, state: &mut State, thread_name: &str) {
 }
 
 
-fn assert(assert: &[LogicExpr], state: &mut State) {
+fn assert(assert: &[LogicExpr], state: &State) {
     for (i, logic_expr) in assert.iter().enumerate() {
         let result = assert_expr(logic_expr, state);
         if !result {
@@ -271,7 +262,7 @@ fn assert(assert: &[LogicExpr], state: &mut State) {
     }
 }
 
-fn assert_expr(expr: &LogicExpr, state: &mut State) -> bool {
+fn assert_expr(expr: &LogicExpr, state: &State) -> bool {
     match expr {
         LogicExpr::Neg(e) => !assert_expr(e, state),
         LogicExpr::And(e1, e2) => {
@@ -286,7 +277,7 @@ fn assert_expr(expr: &LogicExpr, state: &mut State) -> bool {
     }
 }
 
-fn assert_logic_int(expr: &LogicInt, state: &mut State) -> u32 {
+fn assert_logic_int(expr: &LogicInt, state: &State) -> u32 {
     match expr {
         LogicInt::Num(i) => *i,
         LogicInt::LogicVar(thread, variable) => state.read_local(thread, variable),
@@ -339,7 +330,7 @@ mod tests {
         run_threads(&program.threads, &mut state);
 
 
-        assert_eq!(state.read("x", "main"),10);
+        assert_eq!(state.read("x"),10);
         assert_eq!(state.read_local("t1","x"),100);
     }
 
