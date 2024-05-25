@@ -46,7 +46,7 @@ pub enum LogicExpr {
 /// Four types of fences as defined in figure 7 of Alglave et al., 2017.
 /// When a fence does not exist for a given architecture, it implies that the fence is not needed.
 /// For example, an `mfence` in x86 restores Write-Read ordering. Additionally, the Write-Write relation is always respected in x86.
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum FenceType {
     /// Write-Read fence exists in x86 as `mfence` and Power as `sync`
     WR,
