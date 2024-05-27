@@ -288,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "Cannot shadow global variable")]
     #[allow(unused_must_use)]
     fn panics_on_shadow() {
         let source = r#"
