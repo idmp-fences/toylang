@@ -6,20 +6,23 @@ use petgraph::{
 
 use crate::dfs::ProgramOrderDfs;
 
+pub(crate) type ThreadId = String;
+pub(crate) type MemoryId = String;
+
 // todo: use `usize` to represent memory addresses
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
-    Read(String),
-    Write(String),
-    Fence(Fence),
+    Read(ThreadId, MemoryId),
+    Write(ThreadId, MemoryId),
+    Fence(ThreadId, Fence),
 }
 
 impl Node {
     pub fn name(&self) -> Option<&Name> {
         match self {
-            Node::Read(address) => Some(address),
-            Node::Write(address) => Some(address),
-            Node::Fence(_) => None,
+            Node::Read(_, address) => Some(address),
+            Node::Write(_, address) => Some(address),
+            Node::Fence(_, _) => None,
         }
     }
 }
@@ -47,7 +50,7 @@ pub enum Fence {
 
 #[derive(Debug, Clone)]
 pub struct AbstractEventGraph {
-    graph: Aeg,
+    pub graph: Aeg,
 }
 
 impl From<&Program> for AbstractEventGraph {
@@ -85,8 +88,13 @@ fn create_aeg(program: &Program) -> Aeg {
         let mut read_nodes = vec![];
         let mut write_nodes = vec![];
         for stmt in &thread.instructions {
-            let (write, read) =
-                handle_statement(&mut g, &mut last_node, stmt, program.global_vars.as_ref());
+            let (write, read) = handle_statement(
+                &mut g,
+                &mut last_node,
+                stmt,
+                program.global_vars.as_ref(),
+                thread.name.clone(),
+            );
             if write.is_some() {
                 write_nodes.push(write.unwrap());
             }
@@ -96,7 +104,6 @@ fn create_aeg(program: &Program) -> Aeg {
         }
         thread_nodes.push((write_nodes, read_nodes));
     }
-    dbg!(&thread_nodes);
 
     // Add the transitive po edges
     for node in g.node_indices() {
@@ -140,12 +147,13 @@ fn handle_statement(
     last_node: &mut Option<NodeIndex>,
     stmt: &Statement,
     globals: &Vec<String>,
+    thread: ThreadId,
 ) -> (Option<NodeIndex>, Option<NodeIndex>) {
     match stmt {
         Statement::Modify(vwrite, Expr::Num(_)) | Statement::Assign(vwrite, Expr::Num(_)) => {
             // If the variable is a global, return the write node
             if globals.contains(vwrite) {
-                let lhs: NodeIndex = graph.add_node(Node::Write(vwrite.clone()));
+                let lhs: NodeIndex = graph.add_node(Node::Write(thread, vwrite.clone()));
                 // Add a po edge from the last node to the current node
                 if last_node.is_some() {
                     graph.update_edge(last_node.unwrap(), lhs, AegEdge::ProgramOrder);
@@ -162,8 +170,8 @@ fn handle_statement(
             // We distinguish between 4 cases, wether both are globals, only one is a global, or none are globals
 
             if globals.contains(vwrite) && globals.contains(vread) {
-                let lhs = graph.add_node(Node::Write(vwrite.clone()));
-                let rhs = graph.add_node(Node::Read(vread.clone()));
+                let lhs = graph.add_node(Node::Write(thread.clone(), vwrite.clone()));
+                let rhs = graph.add_node(Node::Read(thread, vread.clone()));
                 // Add a po edge from the last node to the current node
                 if last_node.is_some() {
                     graph.update_edge(last_node.unwrap(), rhs, AegEdge::ProgramOrder);
@@ -174,7 +182,7 @@ fn handle_statement(
                 *last_node = Some(lhs);
                 (Some(lhs), Some(rhs))
             } else if globals.contains(vwrite) {
-                let lhs = graph.add_node(Node::Write(vwrite.clone()));
+                let lhs = graph.add_node(Node::Write(thread, vwrite.clone()));
                 // Add a po edge from the last node to the current node
                 if last_node.is_some() {
                     graph.update_edge(last_node.unwrap(), lhs, AegEdge::ProgramOrder);
@@ -182,7 +190,7 @@ fn handle_statement(
                 *last_node = Some(lhs);
                 (Some(lhs), None)
             } else if globals.contains(vread) {
-                let rhs = graph.add_node(Node::Read(vread.clone()));
+                let rhs = graph.add_node(Node::Read(thread, vread.clone()));
                 // Add a po edge from the last node to the current node
                 if last_node.is_some() {
                     graph.update_edge(last_node.unwrap(), rhs, AegEdge::ProgramOrder);
@@ -195,7 +203,7 @@ fn handle_statement(
         }
         Statement::Fence(FenceType::WR) => {
             // Fences are always part of the AEG as they affect the critical cycles
-            let f = graph.add_node(Node::Fence(Fence::Full));
+            let f = graph.add_node(Node::Fence(thread, Fence::Full));
             if last_node.is_some() {
                 graph.update_edge(last_node.unwrap(), f, AegEdge::ProgramOrder);
             }
@@ -260,11 +268,11 @@ fn critical_cycles(g: &Aeg) -> Vec<Vec<NodeIndex>> {
 fn dummy_critical_cycles() -> (Aeg, Vec<Vec<NodeIndex>>) {
     let mut g: Aeg = Aeg::new();
 
-    let Wy = g.add_node(Node::Write("Wy".to_string()));
-    let Rx = g.add_node(Node::Read("Rx".to_string()));
+    let Wy = g.add_node(Node::Write("t1".to_string(), "Wy".to_string()));
+    let Rx = g.add_node(Node::Read("t1".to_string(), "Rx".to_string()));
 
-    let Wx = g.add_node(Node::Write("Wx".to_string()));
-    let Ry = g.add_node(Node::Read("Ry".to_string()));
+    let Wx = g.add_node(Node::Write("t2".to_string(), "Wx".to_string()));
+    let Ry = g.add_node(Node::Read("t2".to_string(), "Ry".to_string()));
 
     g.update_edge(Wy, Rx, AegEdge::ProgramOrder);
     g.update_edge(Wx, Ry, AegEdge::ProgramOrder);
@@ -441,28 +449,31 @@ mod tests {
     #[test]
     fn dont_sit_fig_16() {
         let program = r#"
+        let x: u32 = 0;
         let y: u32 = 0;
         let z: u32 = 0;
         let t: u32 = 0;
         thread t1 {
-            let x: u32 = 0;
-            x = t;
-            x = y;
+            t = 1;
+            y = 1;
         }
         thread t2 {
-            y = 1;
-            z = 1;
-            t = 1;
+            let a: u32 = z;
+            x = 2;
         }
         thread t3 {
-            let x: u32 = 0;
-            x = z;
-            x = y;
+            let a: u32 = x;
+            let b: u32 = y;
+            z = 3;
+            let c: u32 = t;
         }
         thread t4 {
-            let x: u32 = 0;
-            x = t;
-            x = z;
+            let a: u32 = a;
+            z = 4;
+        }
+        thread t5 {
+            t = 5;
+            let a: u32 = z;
         }
         final {
             assert( 0 == 0 );
