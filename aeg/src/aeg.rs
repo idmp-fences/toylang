@@ -1,10 +1,9 @@
 use ast::*;
 use petgraph::{
-    algo::tarjan_scc,
-    graph::{DiGraph, NodeIndex},
+    algo::{all_simple_paths, tarjan_scc},
+    graph::{DiGraph, GraphIndex, Neighbors, NodeIndex},
+    visit::{EdgeRef, GraphBase, IntoNeighbors},
 };
-
-use crate::dfs::ProgramOrderDfs;
 
 pub(crate) type ThreadId = String;
 pub(crate) type MemoryId = String;
@@ -62,6 +61,47 @@ impl From<&Program> for AbstractEventGraph {
 }
 
 impl AbstractEventGraph {
+    /// Find all neighbors of a node, taking into account transitive po edges
+    pub fn neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        let mut po_neighbors = self.transitive_po_neighbors(node);
+        let mut close_non_po_neighbors: Vec<NodeIndex> = self
+            .graph
+            .edges(node)
+            .filter_map(|edge| match edge.weight() {
+                AegEdge::ProgramOrder => None,
+                AegEdge::Competing => Some(edge.target()),
+            })
+            .collect();
+
+        close_non_po_neighbors.append(&mut po_neighbors);
+        close_non_po_neighbors
+    }
+
+    fn transitive_po_neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        // find all the po neighbors of this node, and all the po neighbors of them
+        let close_po_neighbors = self
+            .graph
+            .edges(node)
+            .filter_map(|edge| match edge.weight() {
+                AegEdge::ProgramOrder => Some(edge.target()),
+                AegEdge::Competing => None,
+            });
+
+        let mut neighbors: Vec<NodeIndex> = close_po_neighbors.clone().collect();
+
+        for n in close_po_neighbors {
+            neighbors.append(&mut self.transitive_po_neighbors(n))
+        }
+
+        neighbors
+    }
+
+    /// Check if two nodes are connected through po+,
+    /// i.e. there is a path of [AegEdge::ProgramOrder] connecting them
+    pub fn is_po_connected(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        self.transitive_po_neighbors(a).contains(&b)
+    }
+
     pub fn critical_cycles(&self) -> Vec<Vec<NodeIndex>> {
         critical_cycles(&self.graph)
     }
@@ -73,8 +113,6 @@ impl AbstractEventGraph {
 
 pub(crate) type Aeg = DiGraph<Node, AegEdge>;
 
-// todo: We only consider accesses to shared variables and ignore the local variables. Does this mean local variables are not part of the AEG?
-// also, can we ignore fences
 fn create_aeg(program: &Program) -> Aeg {
     let mut g: Aeg = DiGraph::new();
 
@@ -103,15 +141,6 @@ fn create_aeg(program: &Program) -> Aeg {
             }
         }
         thread_nodes.push((write_nodes, read_nodes));
-    }
-
-    // Add the transitive po edges
-    for node in g.node_indices() {
-        let mut dfs = ProgramOrderDfs::new(&g, node);
-        dfs.next(&g);
-        while let Some(next) = dfs.next(&g) {
-            g.update_edge(node, next, AegEdge::ProgramOrder);
-        }
     }
 
     // Calculate the cmp relations
@@ -355,6 +384,38 @@ mod tests {
             *n.last().unwrap(),
             None
         ));
+    }
+
+    #[test]
+    fn transitivity() {
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        thread t1 {
+            x = 0;
+            x = 1;
+            x = 2;
+            x = 3;
+        }
+        thread t2 {
+            x = 4;
+            y = 5;
+        }
+        final {
+            assert( t1.a == t2.b );
+        }"#;
+        let program = parser::parse(program).unwrap();
+        let aeg = AbstractEventGraph::from(&program);
+        dbg!(&aeg);
+        let mut nodes = aeg.graph.node_indices();
+        let node1 = nodes.next().unwrap();
+        let node2 = nodes.next().unwrap();
+        let node3 = nodes.next().unwrap();
+        let node4 = nodes.next().unwrap();
+        assert_eq!(dbg!(aeg.neighbors(node1)).len(), 4);
+        assert_eq!(aeg.neighbors(node2).len(), 3);
+        assert_eq!(aeg.neighbors(node3).len(), 2);
+        assert_eq!(aeg.neighbors(node4).len(), 1);
     }
 
     #[test]
