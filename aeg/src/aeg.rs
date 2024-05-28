@@ -1,9 +1,11 @@
 use ast::*;
 use petgraph::{
-    algo::{all_simple_paths, tarjan_scc},
-    graph::{DiGraph, GraphIndex, Neighbors, NodeIndex},
-    visit::{EdgeRef, GraphBase, IntoNeighbors},
+    adj::EdgeIndex,
+    graph::{DiGraph, NodeIndex},
+    visit::EdgeRef,
 };
+
+use crate::critical_cycles::{self, Architecture, CriticalCycle};
 
 pub(crate) type ThreadId = String;
 pub(crate) type MemoryId = String;
@@ -17,11 +19,17 @@ pub enum Node {
 }
 
 impl Node {
-    pub fn name(&self) -> Option<&Name> {
+    pub fn address(&self) -> Option<&MemoryId> {
         match self {
             Node::Read(_, address) => Some(address),
             Node::Write(_, address) => Some(address),
             Node::Fence(_, _) => None,
+        }
+    }
+
+    pub fn thread_name(&self) -> &ThreadId {
+        match self {
+            Node::Read(t, _) | Node::Write(t, _) | Node::Fence(t, _) => t,
         }
     }
 }
@@ -102,12 +110,12 @@ impl AbstractEventGraph {
         self.transitive_po_neighbors(a).contains(&b)
     }
 
-    pub fn critical_cycles(&self) -> Vec<Vec<NodeIndex>> {
-        critical_cycles(&self.graph)
+    pub fn tso_critical_cycles(&self) -> Vec<CriticalCycle> {
+        critical_cycles::critical_cycles(self, &Architecture::Tso)
     }
 
-    pub fn potential_fences(&self) -> Vec<Fence> {
-        todo!()
+    pub fn potential_fences(&self, cycles: &[CriticalCycle]) -> Vec<EdgeIndex> {
+        critical_cycles::potential_fences(self, cycles)
     }
 }
 
@@ -133,11 +141,11 @@ fn create_aeg(program: &Program) -> Aeg {
                 program.global_vars.as_ref(),
                 thread.name.clone(),
             );
-            if write.is_some() {
-                write_nodes.push(write.unwrap());
+            if let Some(node) = write {
+                write_nodes.push(node);
             }
-            if read.is_some() {
-                read_nodes.push(read.unwrap());
+            if let Some(node) = read {
+                read_nodes.push(node);
             }
         }
         thread_nodes.push((write_nodes, read_nodes));
@@ -150,14 +158,14 @@ fn create_aeg(program: &Program) -> Aeg {
                 thread_nodes.iter().enumerate().filter(|(j, _)| *j != i)
             {
                 for other_write in other_writes {
-                    if g[*other_write].name() == g[*write].name() {
+                    if g[*other_write].address() == g[*write].address() {
                         // two directed edges represent an undirected relation
                         g.update_edge(*write, *other_write, AegEdge::Competing);
                         g.update_edge(*other_write, *write, AegEdge::Competing);
                     }
                 }
                 for other_read in other_reads {
-                    if g[*other_read].name() == g[*write].name() {
+                    if g[*other_read].address() == g[*write].address() {
                         g.update_edge(*write, *other_read, AegEdge::Competing);
                         g.update_edge(*other_read, *write, AegEdge::Competing);
                     }
@@ -175,7 +183,7 @@ fn handle_statement(
     graph: &mut Aeg,
     last_node: &mut Option<NodeIndex>,
     stmt: &Statement,
-    globals: &Vec<String>,
+    globals: &[String],
     thread: ThreadId,
 ) -> (Option<NodeIndex>, Option<NodeIndex>) {
     match stmt {
@@ -245,24 +253,6 @@ fn handle_statement(
     }
 }
 
-// todo: critical cycles must be minimal
-// (CS1) the cycle contains at least one delay for A;
-// (CS2) per thread, there are at most two accesses, the accesses are adjacent in the
-// cycle, and the accesses are to different memory locations; and
-// (CS3) for a memory location l, there are at most three accesses to l along the cycle,
-// the accesses are adjacent in the cycle, and the accesses are from different threads.
-fn critical_cycles(g: &Aeg) -> Vec<Vec<NodeIndex>> {
-    let tarjan = tarjan_scc(&g);
-
-    dbg!(&tarjan);
-
-    tarjan
-        .iter()
-        .filter(|cycle| is_critical(g, cycle))
-        .map(|cycle| cycle.clone())
-        .collect()
-}
-
 /// Returns the potential critical cycles for the following aeg:
 ///
 /// ```text
@@ -315,13 +305,6 @@ fn dummy_critical_cycles() -> (Aeg, Vec<Vec<NodeIndex>>) {
     return (g, vec![vec![Rx, Wx, Ry, Wy]]);
 }
 
-// a delay is a po or rf edge that is not safe (i.e., is relaxed) for a given architecture
-fn is_critical(g: &Aeg, scc: &[NodeIndex]) -> bool {
-    // The order of node ids within each cycle returned by tarjan_scc is arbitrary.
-    // So we check all pairs of nodes in the cycle for competing edges.
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use petgraph::algo::has_path_connecting;
@@ -329,7 +312,7 @@ mod tests {
     use super::*;
 
     use parser;
-    use petgraph::dot::{Config, Dot};
+    use petgraph::dot::Dot;
 
     #[test]
     fn aeg_from_init() {
@@ -371,9 +354,9 @@ mod tests {
 
         dbg!("{:?}", Dot::with_config(&aeg, &[]));
 
-        // There are 6 assignments, so 6 nodes in the aeg
+        // There are 2 writes and 2 reads
         assert_eq!(aeg.node_count(), 4);
-        // Init has 1 po, threads have 2 po each, and there are is an undirected x-x and y-y cmp edge between the threads (each of which have 2 directed edges)
+        // Threads have 2 po each, and there are is an undirected x-x and y-y cmp edge between the threads (each of which have 2 directed edges)
         assert_eq!(aeg.edge_count(), 6);
 
         // There should be a cycle
@@ -416,36 +399,6 @@ mod tests {
         assert_eq!(aeg.neighbors(node2).len(), 3);
         assert_eq!(aeg.neighbors(node3).len(), 2);
         assert_eq!(aeg.neighbors(node4).len(), 1);
-    }
-
-    #[test]
-    fn critical_cycle() {
-        let program = r#"
-        let x: u32 = 0;
-        let y: u32 = 0;
-        thread t1 {
-            x = 1;
-            let a: u32 = y;
-        }
-        thread t2 {
-            y = 1;
-            let b: u32 = x;
-        }
-        final {
-            // the following is possible under tso
-            assert( !(t1.a == 0 && t1.b == 0) );
-        }"#;
-        let program = parser::parse(program).unwrap();
-
-        let aeg = create_aeg(&program);
-        dbg!(&aeg);
-
-        println!("{:?}", Dot::with_config(&aeg, &[]));
-
-        // Calculate the critical cycles
-        let ccs = critical_cycles(&aeg);
-        dbg!(&ccs);
-        assert_eq!(ccs.len(), 1);
     }
 
     #[test]
@@ -505,46 +458,5 @@ mod tests {
         assert!(aeg.node_count() == 3);
         // 1 program order
         assert!(aeg.edge_count() == 1);
-    }
-
-    #[test]
-    fn dont_sit_fig_16() {
-        let program = r#"
-        let x: u32 = 0;
-        let y: u32 = 0;
-        let z: u32 = 0;
-        let t: u32 = 0;
-        thread t1 {
-            t = 1;
-            y = 1;
-        }
-        thread t2 {
-            let a: u32 = z;
-            x = 2;
-        }
-        thread t3 {
-            let a: u32 = x;
-            let b: u32 = y;
-            z = 3;
-            let c: u32 = t;
-        }
-        thread t4 {
-            let a: u32 = a;
-            z = 4;
-        }
-        thread t5 {
-            t = 5;
-            let a: u32 = z;
-        }
-        final {
-            assert( 0 == 0 );
-        }
-        "#;
-        let ast = parser::parse(program).unwrap();
-        let aeg = AbstractEventGraph::from(&ast);
-        println!("{:?}", Dot::with_config(&aeg.graph, &[]));
-        let ccs = aeg.critical_cycles();
-        dbg!(&ccs);
-        assert_eq!(ccs.len(), 3);
     }
 }

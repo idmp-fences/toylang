@@ -7,13 +7,19 @@ use petgraph::{
 };
 
 use crate::{
-    aeg::{Aeg, AegEdge, MemoryId, Node, ThreadId},
+    aeg::{MemoryId, Node, ThreadId},
     AbstractEventGraph,
 };
 
+/// A critical cycle that satisfies the properties in *Don't sit on the Fence*.
 #[derive(Clone, Debug)]
-pub struct CriticalCycle {
-    pub cycle: Vec<NodeIndex>,
+pub struct CriticalCycle(Vec<NodeIndex>);
+
+#[derive(Clone, Copy, Debug)]
+pub enum Architecture {
+    Tso,
+    Arm,
+    Power,
 }
 
 /// A struct representing a (possibly incomplete) minimal cycle in the AEG.
@@ -31,18 +37,25 @@ where
 {
     /// The nodes in the cycle.
     cycle: Vec<NodeIndex>,
-    thread_accesses: HashMap<T, usize>,
-    memory_accesses: HashMap<M, usize>,
+    // could be a shortvec (size 2 and s3 respectively)
+    thread_accesses: HashMap<T, Vec<usize>>,
+    memory_accesses: HashMap<M, Vec<usize>>,
     has_delay: bool,
+    architecture: Architecture,
 }
 
 impl IncompleteMinimalCycle<ThreadId, MemoryId> {
-    fn new() -> Self {
+    fn new_tso() -> Self {
+        Self::with_architecture(&Architecture::Tso)
+    }
+
+    fn with_architecture(architecture: &Architecture) -> Self {
         IncompleteMinimalCycle {
             cycle: Vec::new(),
             thread_accesses: HashMap::new(),
             memory_accesses: HashMap::new(),
             has_delay: false,
+            architecture: *architecture,
         }
     }
 
@@ -67,42 +80,38 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
             return false;
         }
 
-        let (thread_accesses, memory_accesses) = match &aeg.graph[node] {
-            Node::Write(thread, addr) | Node::Read(thread, addr) => (
-                self.thread_accesses.entry(thread.clone()).or_insert(0),
-                self.memory_accesses.entry(addr.clone()).or_insert(0),
-            ),
+        let (thread, addr) = match &aeg.graph[node] {
+            Node::Write(thread, addr) | Node::Read(thread, addr) => (thread, addr),
 
             Node::Fence(_, _) => {
                 unimplemented!("should fences even be part of the AEG?")
             }
         };
 
+        let thread_accesses = self.thread_accesses.entry(thread.clone()).or_insert(vec![]);
+        let memory_accesses = self.memory_accesses.entry(addr.clone()).or_insert(vec![]);
+
         // MC1: Per thread, there are at most two accesses,
         // and the accesses are adjacent in the cycle
-        let mc1 = match thread_accesses {
+        let mc1 = match thread_accesses.len() {
             0 => true,
             1 => {
-                if *self.cycle.last().unwrap() != node {
-                    true
-                } else {
-                    false
-                }
-            }
+                let last = &aeg.graph[*self.cycle.last().unwrap()];
+                let first = &aeg.graph[*self.cycle.first().unwrap()];
+                last.thread_name() == thread || first.thread_name() == thread
+            } // return true only if this is an adjacent access
             _ => false,
         };
 
         // MC2: For a memory location l, there are at most three accesses to l along the cycle,
         // and the accesses are adjacent in the cycle
-        let mc2 = match memory_accesses {
+        let mc2 = match memory_accesses.len() {
             0 => true,
             1 | 2 => {
-                if *self.cycle.last().unwrap() != node {
-                    true
-                } else {
-                    false
-                }
-            }
+                let last = &aeg.graph[*self.cycle.last().unwrap()];
+                let first = &aeg.graph[*self.cycle.first().unwrap()];
+                last.address().unwrap() == addr || first.address().unwrap() == addr
+            } // return true only if this is an adjacent access
             _ => false,
         };
 
@@ -111,9 +120,10 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
             return false;
         }
 
-        *thread_accesses += 1;
-        *memory_accesses += 1;
+        thread_accesses.push(self.cycle.len());
+        memory_accesses.push(self.cycle.len());
 
+        // a delay is a po or rf edge that is not safe (i.e., is relaxed) for a given architecture
         if let Some(last) = self.last() {
             debug_assert!(
                 aeg.neighbors(*last).contains(&node),
@@ -122,11 +132,17 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
 
             if aeg.is_po_connected(*last, node) {
                 // mark cycle as critical if there is poWR edge
-                match (&aeg.graph[*last], &aeg.graph[node]) {
-                    (_, _) => {
+                match (&self.architecture, &aeg.graph[*last], &aeg.graph[node]) {
+                    (Architecture::Power, _, _) => {
                         self.has_delay = true;
                     }
-                    _ => {}
+                    (Architecture::Tso, Node::Write(_, _), Node::Read(_, _)) => {
+                        self.has_delay = true;
+                    }
+                    (Architecture::Tso, _, _) => {}
+                    (Architecture::Arm, _, _) => {
+                        unimplemented!("Delay not defined for {:?}", self.architecture)
+                    }
                 }
             }
         }
@@ -136,25 +152,84 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
         true
     }
 
-    pub fn make_critical(self) -> Option<CriticalCycle> {
+    /// Turn this cycle into a critical cycle if it has a delay and satisfies adjacent thread/memory properties, otherwise return None.
+    /// It is up to the caller to ensure that [IncompleteMinimalCycle::cycle] forms a cycle in the AEG.
+    ///
+    /// Note that we need to check again for thread/memory properties because of the cyclical nature.
+    /// For example, a variable `t1.x` could be added to the following incomplete cycle:
+    ///
+    /// `t1.y --> t2.a --> t2.b --> ...`
+    ///
+    /// Because the second access to thread t1 is adjacent to the first node in the cycle.
+    /// Later on, however, a different variable `t3.c` could be added as such:
+    ///
+    /// `t1.y --> t2.a --> t2.b --> t1.x --> t3.c`
+    ///
+    /// because it is not prevented by [IncompleteMinimalCycle::add_node].
+    /// The reason it is not prevented is because we could have the following cycle:
+    ///
+    /// `t1.a --> t2.b --> t2.a --> t3.a`
+    ///
+    /// where, after the addition of `t2.a`, the addition of `tn.a` should still be possible.
+    ///
+    /// TODO: Really, it should be possible to add this check in the [IncompleteMinimalCycle::add_node] function,
+    /// and not have to go through the cycle again. Worth looking into if this becomes a bottleneck.
+    fn complete(self) -> Option<CriticalCycle> {
         if self.has_delay {
-            Some(CriticalCycle { cycle: self.cycle })
+            for (_, nodes) in &self.thread_accesses {
+                debug_assert!(nodes.len() <= 2);
+                if nodes.len() == 2 {
+                    let idx1 = nodes[0];
+                    let idx2 = nodes[1];
+                    if !((idx2 - idx1) == 1 || (idx2 - idx1) == self.cycle.len() - 1) {
+                        return None;
+                    }
+                }
+            }
+            for (_, nodes) in &self.memory_accesses {
+                debug_assert!(nodes.len() <= 3);
+                if nodes.len() == 2 {
+                    let idx1 = nodes[0];
+                    let idx2 = nodes[1];
+                    if !((idx2 - idx1) == 1 || (idx2 - idx1) == self.cycle.len() - 1) {
+                        return None;
+                    }
+                }
+                if nodes.len() == 3 {
+                    let idx1 = nodes[0];
+                    let idx2 = nodes[1];
+                    let idx3 = nodes[2];
+
+                    if !((idx2 - idx1) == 1 || (idx2 - idx1) == self.cycle.len() - 1) {
+                        return None;
+                    }
+                    if !((idx3 - idx2) == 1 || (idx3 - idx2) == self.cycle.len() - 1) {
+                        return None;
+                    }
+                }
+            }
+            Some(CriticalCycle(self.cycle))
         } else {
             None
         }
     }
 }
 
-/// Find all critical cycles in an Aeg
-pub fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
+/// Find all critical cycles in an [AbstractEventGraph] for the given architecture
+pub(crate) fn critical_cycles(
+    aeg: &AbstractEventGraph,
+    architecture: &Architecture,
+) -> Vec<CriticalCycle> {
+    // We go through each of the nodes in the abstract event graph, using DFS on each to look for critical cycles
+
     let mut all_cycles = Vec::new();
     let mut inner_cycles = Vec::new();
 
-    // DFS state
+    // DFS state, reset at each node
     let mut stack = Vec::new();
     let mut discovered = aeg.graph.visit_map();
 
-    // Nodes for which critical cycles have been found
+    // Nodes for which critical cycles have been found.
     let mut explored = Vec::new();
 
     // Go through all nodes in the graph, starting a DFS from each node to find critical cycles
@@ -162,8 +237,8 @@ pub fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
         // Reset the state of the DFS
         stack.clear();
         discovered.clear();
-        let mut mc = IncompleteMinimalCycle::new();
-        debug_assert!(mc.add_node(&aeg, start_node));
+        let mut mc = IncompleteMinimalCycle::with_architecture(architecture);
+        debug_assert!(mc.add_node(aeg, start_node));
         stack.push(mc);
 
         while let Some(cycle) = stack.pop() {
@@ -176,7 +251,7 @@ pub fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
                         if cycle.add_node(&aeg, succ) {
                             stack.push(cycle);
                         } else if *cycle.first().unwrap() == succ && cycle.len() > 2 {
-                            if let Some(cycle) = cycle.make_critical() {
+                            if let Some(cycle) = cycle.complete() {
                                 inner_cycles.push(cycle);
                             }
                         }
@@ -191,7 +266,10 @@ pub fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
     all_cycles
 }
 
-pub fn potential_fences(graph: &Aeg, cycles: &[CriticalCycle]) -> Vec<EdgeIndex> {
+pub(crate) fn potential_fences(
+    graph: &AbstractEventGraph,
+    cycles: &[CriticalCycle],
+) -> Vec<EdgeIndex> {
     todo!()
 }
 
@@ -200,64 +278,68 @@ mod test {
     use petgraph::dot::Dot;
 
     use super::*;
-    use crate::aeg::{AbstractEventGraph, AegEdge};
+    use crate::aeg::{AbstractEventGraph, Aeg, AegEdge};
 
-    // #[test]
-    // #[allow(non_snake_case)]
-    // fn minimal_cycle() {
-    //     let mut g = Aeg::new();
+    #[test]
+    #[allow(non_snake_case)]
+    fn minimal_cycle() {
+        let mut g = Aeg::new();
 
-    //     let Wy = g.add_node(Node::Write("t1".to_string(), "Wy".to_string()));
-    //     let Rx = g.add_node(Node::Read("t1".to_string(), "Rx".to_string()));
+        let Wy = g.add_node(Node::Write("t1".to_string(), "Wy".to_string()));
+        let Rx = g.add_node(Node::Read("t1".to_string(), "Rx".to_string()));
 
-    //     let Wx = g.add_node(Node::Write("t2".to_string(), "Wx".to_string()));
-    //     let Ry = g.add_node(Node::Read("t2".to_string(), "Ry".to_string()));
+        let Wx = g.add_node(Node::Write("t2".to_string(), "Wx".to_string()));
+        let Ry = g.add_node(Node::Read("t2".to_string(), "Ry".to_string()));
 
-    //     g.update_edge(Wy, Rx, AegEdge::ProgramOrder);
-    //     g.update_edge(Wx, Ry, AegEdge::ProgramOrder);
+        g.update_edge(Wy, Rx, AegEdge::ProgramOrder);
+        g.update_edge(Wx, Ry, AegEdge::ProgramOrder);
 
-    //     g.update_edge(Rx, Wx, AegEdge::Competing);
-    //     g.update_edge(Wx, Rx, AegEdge::Competing);
+        g.update_edge(Rx, Wx, AegEdge::Competing);
+        g.update_edge(Wx, Rx, AegEdge::Competing);
 
-    //     g.update_edge(Ry, Wy, AegEdge::Competing);
-    //     g.update_edge(Wy, Ry, AegEdge::Competing);
+        g.update_edge(Ry, Wy, AegEdge::Competing);
+        g.update_edge(Wy, Ry, AegEdge::Competing);
 
-    //     let mut mc = IncompleteMinimalCycle::new();
-    //     assert!(mc.add_node(&g, Wy));
-    //     assert!(mc.add_node(&g, Rx));
+        let aeg = AbstractEventGraph { graph: g };
 
-    //     // can't add Wy again
-    //     assert!(!mc.add_node(&g, Wy));
-    // }
+        let mut mc = IncompleteMinimalCycle::new_tso();
+        assert!(mc.add_node(&aeg, Wy));
+        assert!(mc.add_node(&aeg, Rx));
 
-    // #[test]
-    // #[should_panic(expected = "node added is not a successor of the last in the cycle")]
-    // #[allow(non_snake_case)]
-    // fn minimal_cycle_panics() {
-    //     let mut g = Aeg::new();
+        // can't add Wy again
+        assert!(!mc.add_node(&aeg, Wy));
+    }
 
-    //     let Wy = g.add_node(Node::Write("t1".to_string(), "Wy".to_string()));
-    //     let Rx = g.add_node(Node::Read("t1".to_string(), "Rx".to_string()));
+    #[test]
+    #[should_panic(expected = "node added is not a successor of the last in the cycle")]
+    #[allow(non_snake_case)]
+    fn minimal_cycle_panics() {
+        let mut g = Aeg::new();
 
-    //     let Wx = g.add_node(Node::Write("t2".to_string(), "Wx".to_string()));
-    //     let Ry = g.add_node(Node::Read("t2".to_string(), "Ry".to_string()));
+        let Wy = g.add_node(Node::Write("t1".to_string(), "Wy".to_string()));
+        let Rx = g.add_node(Node::Read("t1".to_string(), "Rx".to_string()));
 
-    //     g.update_edge(Wy, Rx, AegEdge::ProgramOrder);
-    //     g.update_edge(Wx, Ry, AegEdge::ProgramOrder);
+        let Wx = g.add_node(Node::Write("t2".to_string(), "Wx".to_string()));
+        let Ry = g.add_node(Node::Read("t2".to_string(), "Ry".to_string()));
 
-    //     g.update_edge(Rx, Wx, AegEdge::Competing);
-    //     g.update_edge(Wx, Rx, AegEdge::Competing);
+        g.update_edge(Wy, Rx, AegEdge::ProgramOrder);
+        g.update_edge(Wx, Ry, AegEdge::ProgramOrder);
 
-    //     g.update_edge(Ry, Wy, AegEdge::Competing);
-    //     g.update_edge(Wy, Ry, AegEdge::Competing);
+        g.update_edge(Rx, Wx, AegEdge::Competing);
+        g.update_edge(Wx, Rx, AegEdge::Competing);
 
-    //     let mut mc = IncompleteMinimalCycle::new();
-    //     assert!(mc.add_node(&g, Wy));
-    //     assert!(mc.add_node(&g, Rx));
+        g.update_edge(Ry, Wy, AegEdge::Competing);
+        g.update_edge(Wy, Ry, AegEdge::Competing);
 
-    //     // panics because Ry is not a successor of Rx
-    //     mc.add_node(&g, Ry);
-    // }
+        let aeg = AbstractEventGraph { graph: g };
+
+        let mut mc = IncompleteMinimalCycle::new_tso();
+        assert!(mc.add_node(&aeg, Wy));
+        assert!(mc.add_node(&aeg, Rx));
+
+        // panics because Ry is not a successor of Rx
+        mc.add_node(&aeg, Ry);
+    }
 
     #[test]
     fn simple_critical_cycle() {
@@ -280,7 +362,10 @@ mod test {
         let aeg = AbstractEventGraph::from(&ast);
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
 
-        let ccs = critical_cycles(&aeg);
+        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        assert_eq!(ccs.len(), 1);
+
+        let ccs = critical_cycles(&aeg, &Architecture::Tso);
         assert_eq!(ccs.len(), 1);
     }
 
@@ -321,9 +406,13 @@ mod test {
         let aeg = AbstractEventGraph::from(&ast);
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
 
-        let ccs = critical_cycles(&aeg);
+        let ccs = critical_cycles(&aeg, &Architecture::Power);
         dbg!(&ccs);
-        assert_eq!(ccs.len(), 6);
+        assert_eq!(ccs.len(), 4);
+
+        let ccs = critical_cycles(&aeg, &Architecture::Tso);
+        dbg!(&ccs);
+        assert_eq!(ccs.len(), 1);
     }
 
     // This panics because fences aren't implemented into the AEG yet.
@@ -351,7 +440,7 @@ mod test {
         let aeg = AbstractEventGraph::from(&ast);
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
 
-        let ccs = critical_cycles(&aeg);
+        let ccs = critical_cycles(&aeg, &Architecture::Power);
         assert_eq!(ccs.len(), 0);
     }
 }
