@@ -4,10 +4,15 @@ stmt        =  {
     modify
   | assign
   | fence
+  | if
+  | while
 }
+stmts  = { stmt* }
 modify = { name ~ "=" ~ expr ~ ";" }
-fence = { "Fence" ~ "(" ~ fencemarker ~ ")" ~ ";" }
+fence  = { "Fence" ~ "(" ~ fencemarker ~ ")" ~ ";" }
 assign = { "let" ~ name ~ ":" ~ "u32" ~ "=" ~ expr ~ ";" }
+if     = { "if" ~ "(" ~ condexpr ~ ")" ~ "{" ~ stmts ~ "}" ~ "else" ~ "{" ~ stmts ~ "}" }
+while  = { "while" ~ "(" ~ condexpr ~ ")" ~ "{" ~ stmt* ~ "}" }
 
 init        =  { assign }
 final       =  { "final" ~ "{" ~ assert* ~ "}" }
@@ -16,17 +21,27 @@ fencemarker =  { "WR" | "WW" | "RW" | "RR" }
 
 assert      =  { "assert" ~ "(" ~ logicexpr ~ ")" ~ ";" }
 
-atom  =  {
-    neg
-  | paren
-  | eq
+condexpr = {
+    cneg
+  | cparen
+  | ceq
 }
-neg = { "!" ~ logicexpr }
-paren = { "(" ~ logicexpr ~ ")" }
-eq = { logicint ~ "==" ~ logicint }
+
+cneg = { "!" ~ condexpr }
+cparen = { "(" ~ condexpr ~ ")" }
+ceq = { expr ~ "==" ~ expr }
+
+atom  =  {
+    aneg
+  | aparen
+  | aeq
+}
+aneg = { "!" ~ logicexpr }
+aparen = { "(" ~ logicexpr ~ ")" }
+aeq = { logicint ~ "==" ~ logicint }
 
 // '&&' has lowest precedence
-logicexpr = { atom ~ ("&&" ~ atom)* } 
+logicexpr = { atom ~ ("&&" ~ atom)* }
 
 logicint    =  { logicvar | num }
 logicvar    = @{ name ~ "." ~ name }

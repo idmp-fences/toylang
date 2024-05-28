@@ -29,6 +29,13 @@
 pub type Name = String;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CondExpr {
+    Neg(Box<CondExpr>),
+    And(Box<CondExpr>, Box<CondExpr>),
+    Eq(Expr, Expr),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogicInt {
     // Constant, for example `1`
     Num(u32),
@@ -79,6 +86,10 @@ pub enum Statement {
     Modify(Name, Expr),
     /// A memory fence, for example `Fence(WR);`
     Fence(FenceType),
+    /// An if statement, for example `if (x == 0) { ... }`
+    If(CondExpr, Vec<Statement>, Vec<Statement>),
+    /// A while statement, for example `while (x == 0) { ... }`
+    While(CondExpr, Vec<Statement>),
 }
 
 impl From<Init> for Statement {
