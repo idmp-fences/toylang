@@ -164,28 +164,45 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>, globals: &[Name]) -> State
 
 /// Parse a condition expression
 /// ```text
-/// condexpr = {
-///     cneg
-///   | cparen
-///   | ceq
-/// }
+/// condexpr = { atom ~ ("&&" ~ atom)* }
 /// ```
 fn parse_cond_expr(pair: pest::iterators::Pair<Rule>) -> CondExpr {
     debug_assert_eq!(pair.as_rule(), Rule::condexpr);
 
+    let mut pairs = pair.into_inner();
+    let mut expr = parse_cond_atom(pairs.next().unwrap());
+    // If there is more than 1 token, we need to chain them with And
+    for op_pair in pairs {
+        let next_atom = parse_cond_atom(op_pair);
+        expr = CondExpr::And(Box::new(expr), Box::new(next_atom));
+    }
+    expr
+}
+
+/// Parse a condition atom
+/// ```text
+/// condatom = {
+///     condneg
+///   | condparen
+///   | condeq
+/// }
+/// ```
+fn parse_cond_atom(pair: pest::iterators::Pair<Rule>) -> CondExpr {
+    debug_assert_eq!(pair.as_rule(), Rule::condatom);
+
     let inner_pair = pair.into_inner().next().unwrap();
     match inner_pair.as_rule() {
-        Rule::ceq => {
+        Rule::condeq => {
             let mut inner_pairs = inner_pair.into_inner();
             let left = parse_expression(inner_pairs.next().unwrap());
             let right = parse_expression(inner_pairs.next().unwrap());
             CondExpr::Eq(left, right)
         },
-        Rule::cneg => {
+        Rule::condneg => {
             let inner_pair = inner_pair.into_inner().next().unwrap();
             CondExpr::Neg(Box::new(parse_cond_expr(inner_pair)))
         },
-        Rule::cparen => parse_cond_expr(inner_pair.into_inner().next().unwrap()),
+        Rule::condparen => parse_cond_expr(inner_pair.into_inner().next().unwrap()),
         _ => unreachable!("Expected eq, neg, or paren, got {:?}", inner_pair.as_rule()),
     }
 }
@@ -198,10 +215,10 @@ fn parse_logic_expr(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
     debug_assert_eq!(pair.as_rule(), Rule::logicexpr);
 
     let mut pairs = pair.into_inner();
-    let mut expr = parse_atom(pairs.next().unwrap());
+    let mut expr = parse_logic_atom(pairs.next().unwrap());
     // If there is more than 1 token, we need to chain them with And
     for op_pair in pairs {
-        let next_atom = parse_atom(op_pair);
+        let next_atom = parse_logic_atom(op_pair);
         expr = LogicExpr::And(Box::new(expr), Box::new(next_atom));
     }
     expr
@@ -209,16 +226,16 @@ fn parse_logic_expr(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
 
 /// Parse an atom
 /// ```text
-/// atom  =  {
+/// logicatom  =  {
 ///     neg
 ///   | paren
 ///   | eq
 /// }
 /// ```
-fn parse_atom(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
+fn parse_logic_atom(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
     debug_assert_eq!(
         pair.as_rule(),
-        Rule::atom,
+        Rule::logicatom,
         "Expected atom, got {:?}",
         pair.as_rule()
     );
@@ -226,17 +243,17 @@ fn parse_atom(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
     let inner_pair = pair.into_inner().next().unwrap();
     match inner_pair.as_rule() {
         // starting with a logicint means we are comparing equality
-        Rule::aeq => {
+        Rule::logiceq => {
             let mut inner_pairs = inner_pair.into_inner();
             let left = parse_logic_int(inner_pairs.next().unwrap());
             let right = parse_logic_int(inner_pairs.next().unwrap());
             LogicExpr::Eq(left, right)
         }
-        Rule::aneg => {
+        Rule::logicneg => {
             let inner_expr = parse_logic_expr(inner_pair.into_inner().next().unwrap());
             LogicExpr::Neg(Box::new(inner_expr))
         }
-        Rule::aparen => parse_logic_expr(inner_pair.into_inner().next().unwrap()),
+        Rule::logicparen => parse_logic_expr(inner_pair.into_inner().next().unwrap()),
         _ => unreachable!("Expected eq, neg, or paren, got {:?}", inner_pair.as_rule()),
     }
 }

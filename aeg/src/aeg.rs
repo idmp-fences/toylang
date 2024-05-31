@@ -126,7 +126,7 @@ fn create_aeg(program: &Program) -> Aeg {
     g
 }
 
-/// Adds the corresponding nodes for a statement to the AEG.
+/// Adds the corresponding nodes for a statement to the AEG and returns the index of the first nodes.
 /// Only the global read/write nodes are added to the AEG as they are the only ones that can create competing edges.
 /// The local read/write nodes are not add to the AEG as they are not relevant for the competing edge calculation.
 fn handle_statement(
@@ -136,7 +136,7 @@ fn handle_statement(
     write_nodes: &mut Vec<NodeIndex>,
     stmt: &Statement,
     globals: &[String],
-) {
+) -> Option<Vec<NodeIndex>> {
     match stmt {
         Statement::Modify(vwrite, Expr::Num(_)) | Statement::Assign(vwrite, Expr::Num(_)) => {
             // If the variable is a global, return the write node
@@ -147,6 +147,9 @@ fn handle_statement(
                 *last_node = vec![lhs];
 
                 write_nodes.push(lhs);
+                Some(vec![lhs])
+            } else {
+                None
             }
         }
         Statement::Modify(vwrite, Expr::Var(vread))
@@ -164,18 +167,23 @@ fn handle_statement(
                 *last_node = vec![lhs];
                 write_nodes.push(lhs);
                 read_nodes.push(rhs);
+                Some(vec![lhs])
             } else if globals.contains(vwrite) {
                 let lhs = graph.add_node(Node::Write(vwrite.clone()));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, lhs);
                 *last_node = vec![lhs];
                 write_nodes.push(lhs);
+                Some(vec![lhs])
             } else if globals.contains(vread) {
                 let rhs = graph.add_node(Node::Read(vread.clone()));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, rhs);
                 *last_node = vec![rhs];
                 read_nodes.push(rhs);
+                Some(vec![rhs])
+            } else {
+                None
             }
         }
         Statement::Fence(FenceType::WR) => {
@@ -183,6 +191,7 @@ fn handle_statement(
             let f = graph.add_node(Node::Fence(Fence::Full));
             connect_previous(graph, last_node, f);
             *last_node = vec![f];
+            Some(vec![f])
         }
         Statement::Fence(_) => {
             todo!("Implement other fences")
@@ -192,7 +201,9 @@ fn handle_statement(
             handle_condition(graph, &mut reads, cond, globals);
 
             // Add a po edge from the last node to the first read
+            let mut first = None;
             if let Some(read) = reads.first() {
+                first = Some(vec![*read]);
                 connect_previous(graph, last_node, *read);
             }
             if let Some(read) = reads.last() {
@@ -203,14 +214,22 @@ fn handle_statement(
             read_nodes.append(&mut reads);
 
             let branch_node = last_node.clone();
+            let mut first_thn = None;
             for stmt in thn {
-                handle_statement(graph, last_node, read_nodes, write_nodes, stmt, globals);
+                let f = handle_statement(graph, last_node, read_nodes, write_nodes, stmt, globals);
+                if first_thn.is_none() {
+                    first_thn = f;
+                }
             }
 
             let mut thn_branch = last_node.clone();
+            let mut first_els = None;
             *last_node = branch_node;
             for stmt in els {
-                handle_statement(graph, &mut thn_branch, read_nodes, write_nodes, stmt, globals);
+                let f = handle_statement(graph, &mut thn_branch, read_nodes, write_nodes, stmt, globals);
+                if first_els.is_none() {
+                    first_els = f;
+                }
             }
 
             for node in thn_branch.iter() {
@@ -218,15 +237,26 @@ fn handle_statement(
                     last_node.push(*node);
                 }
             }
+            
+            if first.is_some() {
+                first
+            } else if let Some(mut ft) = first_thn {
+                if let Some(fe) = first_els {
+                    ft.extend(fe);
+                }
+                Some(ft)
+            } else {
+                first_els
+            }
         }
         Statement::While(cond, body) => {
             let mut reads = vec![];
             handle_condition(graph, &mut reads, cond, globals);
 
             // Add a po edge from the last node to the first read
-            let mut first = last_node.clone();
+            let mut first = None;
             if let Some(read) = reads.first() {
-                first = vec![*read];
+                first = Some(vec![*read]);
                 connect_previous(graph, last_node, *read);
             }
             if let Some(read) = reads.last() {
@@ -237,16 +267,24 @@ fn handle_statement(
             read_nodes.append(&mut reads);
 
             for stmt in body {
-                handle_statement(graph, last_node, read_nodes, write_nodes, stmt, globals);
+                let f = handle_statement(graph, last_node, read_nodes, write_nodes, stmt, globals);
+                if first.is_none() {
+                    first = f;
+                }
             }
 
             // Add edges from the last node to the first
-            for node in first.iter() {
-                connect_previous(graph, last_node, *node);
+            if let Some(f) = first {
+                for node in f.iter() {
+                    connect_previous(graph, last_node, *node);
+                }
+                
+                // Next node should connect to the first node
+                last_node.clone_from(&f);
+                Some(f)
+            } else {
+                None
             }
-
-            // Next node should connect to the first node
-            *last_node = first;
         }
     }
 }

@@ -21,31 +21,34 @@ fencemarker =  { "WR" | "WW" | "RW" | "RR" }
 
 assert      =  { "assert" ~ "(" ~ logicexpr ~ ")" ~ ";" }
 
-condexpr = {
-    cneg
-  | cparen
-  | ceq
+condatom = {
+    condneg
+  | condparen
+  | condeq
 }
 
-cneg = { "!" ~ condexpr }
-cparen = { "(" ~ condexpr ~ ")" }
-ceq = { expr ~ "==" ~ expr }
-
-atom  =  {
-    aneg
-  | aparen
-  | aeq
-}
-aneg = { "!" ~ logicexpr }
-aparen = { "(" ~ logicexpr ~ ")" }
-aeq = { logicint ~ "==" ~ logicint }
+condneg = { "!" ~ condexpr }
+condparen = { "(" ~ condexpr ~ ")" }
+condeq = { expr ~ "==" ~ expr }
 
 // '&&' has lowest precedence
-logicexpr = { atom ~ ("&&" ~ atom)* }
+condexpr = { condatom ~ ("&&" ~ logicatom)* }
+
+logicatom  =  {
+    logicneg
+  | logicparen
+  | logiceq
+}
+logicneg = { "!" ~ logicexpr }
+logicparen = { "(" ~ logicexpr ~ ")" }
+logiceq = { logicint ~ "==" ~ logicint }
+
+// '&&' has lowest precedence
+logicexpr = { logicatom ~ ("&&" ~ logicatom)* }
 
 logicint    =  { logicvar | num }
 logicvar    = @{ name ~ "." ~ name }
-name        = @{ ('a'..'z' | 'A'..'Z') ~ ('a'..'z' | 'A'..'Z' | ASCII_DIGIT)* }
+name        = @{ ASCII_ALPHA ~ ASCII_ALPHANUMERIC* }
 num         = @{ ASCII_DIGIT+ }
 WHITESPACE  = _{ " " | NEWLINE }
 
