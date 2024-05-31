@@ -1,0 +1,15 @@
+let x: u32 = 0;
+let y: u32 = 0;
+
+thread t1 {
+    let a: u32 = x;
+    y = 1;
+}
+
+thread t2 {
+    let a: u32 = y;
+    x = 1;
+}
+
+final {
+}
