@@ -1,4 +1,4 @@
 mod aeg;
-mod dfs;
+mod critical_cycles;
 
 pub use aeg::AbstractEventGraph;
