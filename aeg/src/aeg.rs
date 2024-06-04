@@ -105,7 +105,7 @@ fn create_aeg(program: &Program) -> Aeg {
     for (i, (write_nodes, _)) in thread_nodes.iter().enumerate() {
         for write in write_nodes {
             for (_j, (other_writes, other_reads)) in
-            thread_nodes.iter().enumerate().filter(|(j, _)| *j != i)
+                thread_nodes.iter().enumerate().filter(|(j, _)| *j != i)
             {
                 for other_write in other_writes {
                     if g[*other_write].name() == g[*write].name() {
