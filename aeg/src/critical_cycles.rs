@@ -11,8 +11,12 @@ use crate::{
     AbstractEventGraph,
 };
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// A critical cycle that satisfies the properties in *Don't sit on the Fence*.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CriticalCycle {
     cycle: Vec<NodeIndex>,
     potential_fences: Vec<EdgeIndex>,

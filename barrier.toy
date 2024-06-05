@@ -1,0 +1,16 @@
+ let x: u32 = 0;
+let y: u32 = 0;
+
+thread t1 {
+    x = 1;
+    let a: u32 = y;
+}
+
+thread t2 {
+    y = 1;
+    let b: u32 = x;
+}
+
+final {
+    assert( t1.a == t2.b );
+}

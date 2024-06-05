@@ -8,11 +8,15 @@ use petgraph::{
 
 use crate::critical_cycles::{self, Architecture, CriticalCycle};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 pub(crate) type ThreadId = String;
 pub(crate) type MemoryId = String;
 
 // todo: use `usize` to represent memory addresses
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Node {
     Read(ThreadId, MemoryId),
     Write(ThreadId, MemoryId),
@@ -36,6 +40,7 @@ impl Node {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum AegEdge {
     /// Abstracts all po edges that connect two events in program order.
     /// Note that this does not include po+, the transitive edges. For example, the relation
@@ -47,6 +52,7 @@ pub enum AegEdge {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Fence {
     /// mfence in x86, sync in Power, dmb in ARM
     Full,

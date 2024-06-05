@@ -1,13 +1,13 @@
 mod check;
 
+use rand::{thread_rng, Rng};
 use std::collections::{HashMap, HashSet, VecDeque};
-use rand::{Rng, thread_rng};
 
-use ast::*;
 use crate::check::check;
+use ast::*;
 
 #[derive(Debug, Clone)]
-enum MemoryModel {
+pub enum MemoryModel {
     Sc,
     Tso,
 }
@@ -68,7 +68,6 @@ impl State {
     }
 
     pub fn write(&mut self, x: &str, value: u32, thread: &str) {
-
         match self.memory_model {
             MemoryModel::Sc => {
                 self.memory.insert(x.to_string(), value);
@@ -94,24 +93,15 @@ impl State {
 
     pub fn read(&self, x: &str) -> u32 {
         match self.memory_model {
-            MemoryModel::Sc => {
-                self.memory.get(x).copied().unwrap_or(0)
-            }
-            MemoryModel::Tso => {
-                self.memory.get(x).copied().unwrap_or(0)
-            }
+            MemoryModel::Sc => self.memory.get(x).copied().unwrap_or(0),
+            MemoryModel::Tso => self.memory.get(x).copied().unwrap_or(0),
         }
-       
     }
 
     pub fn read_local(&self, thread: &str, x: &str) -> u32 {
         match self.memory_model {
-            MemoryModel::Sc => {
-                self.read(format!("{thread}.{x}").as_str())
-            }
-            MemoryModel::Tso => {
-                self.read(format!("{thread}.{x}").as_str())
-            }
+            MemoryModel::Sc => self.read(format!("{thread}.{x}").as_str()),
+            MemoryModel::Tso => self.read(format!("{thread}.{x}").as_str()),
         }
     }
 
@@ -122,22 +112,17 @@ impl State {
             match result {
                 Some((key, value)) => {
                     self.memory.insert(key, value);
-                    return true
-                },
-                None => {
-                   return false
+                    return true;
                 }
+                None => return false,
             }
         }
-        false 
+        false
     }
 
-    
     /// Continues to flush random write buffers for a specific thread until all are flushed.
     pub fn flush_write_buffer(&mut self, thread_name: &str) {
-        while self.flush_single_write_buffer(thread_name) {
-            
-        }
+        while self.flush_single_write_buffer(thread_name) {}
     }
 }
 
@@ -172,9 +157,12 @@ fn run_threads(threads: &[Thread], state: &mut State) {
     let mut rng = rand::thread_rng(); // Create a random number generator
     let mut active_threads = (0..threads.len()).collect::<Vec<_>>(); // Track active threads by their indices
     let mut ip = vec![0; threads.len()]; // Instruction pointers for each thread
-    
+
     for thread in threads {
-        state.write_buffers.entry(thread.name.clone()).or_insert_with(FifoMap::new);
+        state
+            .write_buffers
+            .entry(thread.name.clone())
+            .or_insert_with(FifoMap::new);
     }
 
     while !active_threads.is_empty() {
@@ -200,31 +188,32 @@ fn simulate_instruction(instruction: &Statement, thread_name: &str, state: &mut 
     match instruction {
         Statement::Modify(var, expr) => {
             let value = evaluate_expression(expr, state, thread_name);
-            if state.memory.contains_key(format!("{thread_name}.{var}").as_str()) {
+            if state
+                .memory
+                .contains_key(format!("{thread_name}.{var}").as_str())
+            {
                 state.write_local(thread_name, var, value); // Modify the global variable
             } else {
                 state.write(var, value, thread_name);
             }
-            
-        },
+        }
         Statement::Assign(var, expr) => {
             let value = evaluate_expression(expr, state, thread_name);
             state.write_local(thread_name, var, value); // Assign to a local/thread-specific variable
-        },
+        }
         Statement::Fence(fence_type) => {
             apply_fence(fence_type, state, thread_name); // Apply the specified fence
-            
-        },
+        }
     }
-     // With a 25% chance, flush one random write buffer item
+    // With a 25% chance, flush one random write buffer item
     match state.memory_model {
         MemoryModel::Sc => {
-            // 
+            //
         }
         MemoryModel::Tso => {
             let mut rng = rand::thread_rng();
             if rng.gen::<f64>() < 0.25 {
-                state.flush_single_write_buffer(thread_name);  // Ensure flush_random_write_buffer accepts thread_name
+                state.flush_single_write_buffer(thread_name); // Ensure flush_random_write_buffer accepts thread_name
             }
         }
     }
@@ -237,13 +226,12 @@ fn evaluate_expression(expr: &Expr, state: &mut State, thread_name: &str) -> u32
             if var.contains('.') {
                 let parts: Vec<&str> = var.split('.').collect();
                 state.read_local(parts[0], parts[1])
-            } 
-            else if state.memory.contains_key(&[thread_name,".",var].join("")) {
+            } else if state.memory.contains_key(&[thread_name, ".", var].join("")) {
                 state.read_local(thread_name, var)
             } else {
                 state.read(var)
             }
-        },
+        }
         _ => unreachable!(), // Handle other expressions as needed
     }
 }
@@ -253,13 +241,12 @@ fn apply_fence(fence_type: &FenceType, state: &mut State, thread_name: &str) {
         FenceType::WR => {
             // Implement the logic for write-read fence
             state.flush_write_buffer(thread_name);
-        },
+        }
         _ => {
             // Handle other types of fences as required
-        },
+        }
     }
 }
-
 
 fn assert(assert: &[LogicExpr], state: &State) {
     for (i, logic_expr) in assert.iter().enumerate() {
@@ -274,9 +261,7 @@ fn assert(assert: &[LogicExpr], state: &State) {
 fn assert_expr(expr: &LogicExpr, state: &State) -> bool {
     match expr {
         LogicExpr::Neg(e) => !assert_expr(e, state),
-        LogicExpr::And(e1, e2) => {
-            assert_expr(e1, state) && assert_expr(e2, state)
-        }
+        LogicExpr::And(e1, e2) => assert_expr(e1, state) && assert_expr(e2, state),
         LogicExpr::Eq(e1, e2) => {
             let v1 = assert_logic_int(e1, state);
             let v2 = assert_logic_int(e2, state);
@@ -311,22 +296,16 @@ fn print_memory(memory: &HashMap<String, u32>) {
 }
 #[cfg(test)]
 mod tests {
-    use super::*;  // Import necessary components from the outer module
+    use super::*; // Import necessary components from the outer module
 
     #[test]
     fn test_local_global_vars() {
         let memory_model = MemoryModel::Tso;
-        let init = vec![
-            Init::Assign("x".to_string(), Expr::Num(10)), 
-        ];
-        let threads = vec![
-            Thread {
-                name: "t1".to_string(),
-                instructions: vec![
-                    Statement::Assign("x".to_string(), Expr::Num(100)),
-                ],
-            }
-        ];
+        let init = vec![Init::Assign("x".to_string(), Expr::Num(10))];
+        let threads = vec![Thread {
+            name: "t1".to_string(),
+            instructions: vec![Statement::Assign("x".to_string(), Expr::Num(100))],
+        }];
         let assert = vec![];
 
         let program = Program {
@@ -338,33 +317,30 @@ mod tests {
         crate::init(&program.init, &mut state);
         run_threads(&program.threads, &mut state);
 
-
-        assert_eq!(state.read("x"),10);
-        assert_eq!(state.read_local("t1","x"),100);
+        assert_eq!(state.read("x"), 10);
+        assert_eq!(state.read_local("t1", "x"), 100);
     }
 
     #[test]
     fn test_read_writes() {
         let memory_model = MemoryModel::Tso;
         let init = vec![
-                    Init::Assign("x".to_string(), Expr::Num(10)),
-                    Init::Assign("y".to_string(), Expr::Num(20)),
-                    Init::Assign("z".to_string(), Expr::Num(30)),
+            Init::Assign("x".to_string(), Expr::Num(10)),
+            Init::Assign("y".to_string(), Expr::Num(20)),
+            Init::Assign("z".to_string(), Expr::Num(30)),
         ];
-        let threads = vec![
-            Thread {
-                name: "t1".to_string(),
-                instructions: vec![
-                    Statement::Modify("x".to_string(), Expr::Num(100)),
-                    Statement::Modify("y".to_string(), Expr::Num(200)),
-                    Statement::Modify("z".to_string(), Expr::Num(300)),
-                    Statement::Fence(FenceType::WR),
-                    Statement::Assign("fencedX".to_string(), Expr::Var("x".to_string())),
-                    Statement::Assign("fencedY".to_string(), Expr::Var("y".to_string())),
-                    Statement::Assign("fencedZ".to_string(), Expr::Var("z".to_string())),
-                ],
-            }
-        ];
+        let threads = vec![Thread {
+            name: "t1".to_string(),
+            instructions: vec![
+                Statement::Modify("x".to_string(), Expr::Num(100)),
+                Statement::Modify("y".to_string(), Expr::Num(200)),
+                Statement::Modify("z".to_string(), Expr::Num(300)),
+                Statement::Fence(FenceType::WR),
+                Statement::Assign("fencedX".to_string(), Expr::Var("x".to_string())),
+                Statement::Assign("fencedY".to_string(), Expr::Var("y".to_string())),
+                Statement::Assign("fencedZ".to_string(), Expr::Var("z".to_string())),
+            ],
+        }];
         let assert = vec![];
 
         let program = Program {
@@ -375,9 +351,9 @@ mod tests {
         let mut state = State::new(memory_model);
         crate::init(&program.init, &mut state);
         run_threads(&program.threads, &mut state);
-        assert_eq!(state.read_local("t1","fencedX"), 100);
-        assert_eq!(state.read_local("t1","fencedY"), 200);
-        assert_eq!(state.read_local("t1","fencedZ"), 300);
+        assert_eq!(state.read_local("t1", "fencedX"), 100);
+        assert_eq!(state.read_local("t1", "fencedY"), 200);
+        assert_eq!(state.read_local("t1", "fencedZ"), 300);
     }
 
     #[test]
@@ -386,17 +362,11 @@ mod tests {
 
         for _ in 0..100 {
             let memory_model = MemoryModel::Tso;
-            let init = vec![
-                Init::Assign("x".to_string(), Expr::Num(10)), 
-            ];
-            let threads = vec![
-                Thread {
-                    name: "t1".to_string(),
-                    instructions: vec![
-                        Statement::Modify("x".to_string(), Expr::Num(100)),
-                    ],
-                }
-            ];
+            let init = vec![Init::Assign("x".to_string(), Expr::Num(10))];
+            let threads = vec![Thread {
+                name: "t1".to_string(),
+                instructions: vec![Statement::Modify("x".to_string(), Expr::Num(100))],
+            }];
             let assert = vec![];
 
             let program = Program {
@@ -414,7 +384,10 @@ mod tests {
             }
         }
 
-        assert!(assertion_failed, "The assertion was never false in 100 runs.");
+        assert!(
+            assertion_failed,
+            "The assertion was never false in 100 runs."
+        );
     }
 
     #[test]
@@ -430,20 +403,23 @@ mod tests {
             assert,
         };
         let mut state = State::new(memory_model);
-        state.write_buffers.entry("t1".to_string()).or_insert_with(FifoMap::new);
+        state
+            .write_buffers
+            .entry("t1".to_string())
+            .or_insert_with(FifoMap::new);
         if let Some(buffer) = state.write_buffers.get_mut("t1") {
             buffer.insert(format!("x"), 0u32);
         }
         state.write("x", 1, "t1");
         state.write("y", 2, "t1");
         state.write("z", 3, "t1");
-        assert_ne!(state.read("x"),1);
-        assert_ne!(state.read("y"),2);
-        assert_ne!(state.read("z"),3);
+        assert_ne!(state.read("x"), 1);
+        assert_ne!(state.read("y"), 2);
+        assert_ne!(state.read("z"), 3);
         state.flush_write_buffer("t1");
-        assert_eq!(state.read("x"),1);
-        assert_eq!(state.read("y"),2);
-        assert_eq!(state.read("z"),3);
+        assert_eq!(state.read("x"), 1);
+        assert_eq!(state.read("y"), 2);
+        assert_eq!(state.read("z"), 3);
     }
 
     #[test]
@@ -462,19 +438,18 @@ mod tests {
         state.write("x", 1, "main");
         state.write("y", 2, "main");
         state.write("z", 3, "main");
-        assert_eq!(state.read("x"),1);
-        assert_eq!(state.read("y"),2);
-        assert_eq!(state.read("z"),3);
-        state.write_local("t1","x", 11);
-        state.write_local("t2","y", 22);
-        state.write_local("t2","z", 33);
-        
         assert_eq!(state.read("x"), 1);
         assert_eq!(state.read("y"), 2);
         assert_eq!(state.read("z"), 3);
-        assert_eq!(state.read_local("t1","x"), 11);
-        assert_eq!(state.read_local("t2","y"), 22);
-        assert_eq!(state.read_local("t2","z"), 33);
-    }
+        state.write_local("t1", "x", 11);
+        state.write_local("t2", "y", 22);
+        state.write_local("t2", "z", 33);
 
+        assert_eq!(state.read("x"), 1);
+        assert_eq!(state.read("y"), 2);
+        assert_eq!(state.read("z"), 3);
+        assert_eq!(state.read_local("t1", "x"), 11);
+        assert_eq!(state.read_local("t2", "y"), 22);
+        assert_eq!(state.read_local("t2", "z"), 33);
+    }
 }
