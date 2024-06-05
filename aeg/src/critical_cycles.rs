@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use petgraph::{
-    adj::EdgeIndex,
     graph::NodeIndex,
+    prelude::EdgeIndex,
     visit::{VisitMap, Visitable},
 };
 
@@ -13,7 +13,10 @@ use crate::{
 
 /// A critical cycle that satisfies the properties in *Don't sit on the Fence*.
 #[derive(Clone, Debug)]
-pub struct CriticalCycle(Vec<NodeIndex>);
+pub struct CriticalCycle {
+    cycle: Vec<NodeIndex>,
+    potential_fences: Vec<EdgeIndex>,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Architecture {
@@ -174,7 +177,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
     ///
     /// TODO: Really, it should be possible to add this check in the [IncompleteMinimalCycle::add_node] function,
     /// and not have to go through the cycle again. Worth looking into if this becomes a bottleneck.
-    fn complete(self) -> Option<CriticalCycle> {
+    fn complete(self, aeg: &AbstractEventGraph) -> Option<CriticalCycle> {
         if self.has_delay {
             for (_, nodes) in &self.thread_accesses {
                 debug_assert!(nodes.len() <= 2);
@@ -208,7 +211,12 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
                     }
                 }
             }
-            Some(CriticalCycle(self.cycle))
+
+            let pf = potential_fences(aeg, &self.cycle, &self.architecture);
+            Some(CriticalCycle {
+                cycle: self.cycle,
+                potential_fences: pf,
+            })
         } else {
             None
         }
@@ -248,10 +256,10 @@ pub(crate) fn critical_cycles(
                 for succ in aeg.neighbors(node) {
                     if !explored.contains(&succ) {
                         let mut cycle = cycle.clone();
-                        if cycle.add_node(&aeg, succ) {
+                        if cycle.add_node(aeg, succ) {
                             stack.push(cycle);
                         } else if *cycle.first().unwrap() == succ && cycle.len() > 2 {
-                            if let Some(cycle) = cycle.complete() {
+                            if let Some(cycle) = cycle.complete(aeg) {
                                 inner_cycles.push(cycle);
                             }
                         }
@@ -266,11 +274,53 @@ pub(crate) fn critical_cycles(
     all_cycles
 }
 
-pub(crate) fn potential_fences(
-    graph: &AbstractEventGraph,
-    cycles: &[CriticalCycle],
+/// Find all potential fence placements in a cycle.
+///
+/// Under TSO, this equates to all poWR edges in the critical cycle.
+/// However, this edge could be in po+ (a transitive edge) thus we must
+/// list all the po edges between the two nodes.
+///
+/// TODO: handle the case where the write and read sandwich an if/else statement.
+/// Currently it will just pick any shortest of the branching po paths and return those edges,
+/// which I don't think is correct, as placing a fence on just one of the branches will still
+/// allow critical cycles through the other branch.
+fn potential_fences(
+    aeg: &AbstractEventGraph,
+    cycle: &[NodeIndex],
+    architecture: &Architecture,
 ) -> Vec<EdgeIndex> {
-    todo!()
+    let n = cycle.len();
+    let mut potential_fences = vec![];
+    for i in 0..n {
+        let j = {
+            if i < n - 1 {
+                i + 1
+            } else {
+                0
+            }
+        };
+
+        let u = cycle[i];
+        let v = cycle[j];
+
+        if let Some(path) = aeg.po_between(u, v) {
+            // There is a po(+) edge between u and v
+            match (architecture, &aeg.graph[u], &aeg.graph[v]) {
+                // Only alow poWR edges on TSO
+                (Architecture::Tso, Node::Write(_, _), Node::Read(_, _)) => {}
+                (Architecture::Tso, _, _) => continue,
+                (Architecture::Arm, _, _) => unimplemented!(),
+                // Allow everything on Power
+                (Architecture::Power, _, _) => {}
+            }
+
+            potential_fences.extend(
+                path.windows(2)
+                    .map(|pair| aeg.graph.find_edge(pair[0], pair[1]).unwrap()),
+            )
+        }
+    }
+    potential_fences
 }
 
 #[cfg(test)]
@@ -409,10 +459,15 @@ mod test {
         let ccs = critical_cycles(&aeg, &Architecture::Power);
         dbg!(&ccs);
         assert_eq!(ccs.len(), 4);
+        assert_eq!(
+            ccs.iter().flat_map(|cc| cc.potential_fences.iter()).count(),
+            3 + 3 + 2 + 2
+        );
 
         let ccs = critical_cycles(&aeg, &Architecture::Tso);
         dbg!(&ccs);
         assert_eq!(ccs.len(), 1);
+        assert_eq!(ccs[0].potential_fences.len(), 2)
     }
 
     // This panics because fences aren't implemented into the AEG yet.

@@ -1,7 +1,8 @@
 use ast::*;
 use petgraph::{
     adj::EdgeIndex,
-    graph::{DiGraph, NodeIndex},
+    algo::astar,
+    graph::{DiGraph, Edge, NodeIndex},
     visit::EdgeRef,
 };
 
@@ -110,12 +111,27 @@ impl AbstractEventGraph {
         self.transitive_po_neighbors(a).contains(&b)
     }
 
-    pub fn tso_critical_cycles(&self) -> Vec<CriticalCycle> {
-        critical_cycles::critical_cycles(self, &Architecture::Tso)
+    /// Returns the shortest program order path between two nodes, if it exists
+    pub fn po_between(&self, a: NodeIndex, b: NodeIndex) -> Option<Vec<NodeIndex>> {
+        if !self.is_po_connected(a, b) {
+            return None;
+        }
+
+        astar(
+            &self.graph,
+            a,
+            |finish| finish == b,
+            |edge| match edge.weight() {
+                AegEdge::ProgramOrder => 0,
+                AegEdge::Competing => 100,
+            },
+            |_| 0,
+        )
+        .map(|(_cost, path)| path)
     }
 
-    pub fn potential_fences(&self, cycles: &[CriticalCycle]) -> Vec<EdgeIndex> {
-        critical_cycles::potential_fences(self, cycles)
+    pub fn tso_critical_cycles(&self) -> Vec<CriticalCycle> {
+        critical_cycles::critical_cycles(self, &Architecture::Tso)
     }
 }
 
