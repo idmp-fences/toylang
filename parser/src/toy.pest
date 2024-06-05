@@ -32,7 +32,7 @@ condparen = { "(" ~ condexpr ~ ")" }
 condeq = { expr ~ "==" ~ expr }
 
 // '&&' has lowest precedence
-condexpr = { condatom ~ ("&&" ~ logicatom)* }
+condexpr = { condatom ~ ("&&" ~ condatom)* }
 
 logicatom  =  {
     logicneg

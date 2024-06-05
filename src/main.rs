@@ -41,6 +41,6 @@ fn main() {
     let args = Args::parse();
     let source = fs::read_to_string(&args.input).expect("Failed to read input file!");
     let program = parser::parse(&source).unwrap();
-    if !args.parse_only { return; }
+    if args.parse_only { return; }
     interpreter::execute(&program, MemoryModel::from(args.memory_model));
 }

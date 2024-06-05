@@ -253,20 +253,18 @@ fn handle_statement(
             // Move the read nodes into the read node list
             read_nodes.append(&mut reads);
 
-            let branch_node = last_node.clone();
+            let mut thn_branch = last_node.clone();
             let mut first_thn = None;
             for stmt in thn {
-                let f = handle_statement(graph, last_node, read_nodes, write_nodes, stmt, globals, thread.clone());
+                let f = handle_statement(graph, &mut thn_branch, read_nodes, write_nodes, stmt, globals, thread.clone());
                 if first_thn.is_none() {
                     first_thn = f;
                 }
             }
 
-            let mut thn_branch = last_node.clone();
             let mut first_els = None;
-            *last_node = branch_node;
             for stmt in els {
-                let f = handle_statement(graph, &mut thn_branch, read_nodes, write_nodes, stmt, globals, thread.clone());
+                let f = handle_statement(graph, last_node, read_nodes, write_nodes, stmt, globals, thread.clone());
                 if first_els.is_none() {
                     first_els = f;
                 }
@@ -294,9 +292,9 @@ fn handle_statement(
             handle_condition(graph, &mut reads, cond, globals, thread.clone());
 
             // Add a po edge from the last node to the first read
-            let mut first = None;
+            let mut first_cond = None;
             if let Some(read) = reads.first() {
-                first = Some(vec![*read]);
+                first_cond = Some(vec![*read]);
                 connect_previous(graph, last_node, *read);
             }
             if let Some(read) = reads.last() {
@@ -305,24 +303,42 @@ fn handle_statement(
 
             // Move the read nodes into the read node list
             read_nodes.append(&mut reads);
+            
+            // Store the branch node for the condition
+            let branch = last_node.clone();
 
+            let mut first_body = None;
             for stmt in body {
                 let f = handle_statement(graph, last_node, read_nodes, write_nodes, stmt, globals, thread.clone());
-                if first.is_none() {
-                    first = f;
+                if first_body.is_none() {
+                    first_body = f;
                 }
             }
-
-            // Add edges from the last node to the first
-            if let Some(f) = first {
+            
+            // Condition contains a read
+            if let Some(f) = first_cond {
+                // Add edges from the last node to the first
                 for node in f.iter() {
                     connect_previous(graph, last_node, *node);
                 }
                 
-                // Next node should connect to the first node
-                last_node.clone_from(&f);
+                // Next node should connect to the end of the condition
+                *last_node = branch;
                 Some(f)
-            } else {
+            }
+            // Body contains a read or write operation
+            else if let Some(f) = first_body {
+                // Add edges from the last node of the body to the start of the body
+                for node in f.iter() {
+                    connect_previous(graph, last_node, *node);
+                }
+                
+                // Next node should connect to the end of the body and the nodes before the while loop
+                last_node.append(&mut branch.clone());
+                Some(f)
+            }
+            // While loop is empty
+            else {
                 None
             }
         }
@@ -366,7 +382,7 @@ fn handle_expression(
         Expr::Num(_) => (),
         Expr::Var(vread) => {
             if globals.contains(vread) {
-                let node = graph.add_node(Node::Read(vread.clone(), thread));
+                let node = graph.add_node(Node::Read(thread, vread.clone()));
                 reads.last().map(|i| graph.add_edge(*i, node, AegEdge::ProgramOrder));
                 reads.push(node);
             }
@@ -434,6 +450,7 @@ mod tests {
 
     use parser;
     use petgraph::dot::Dot;
+    use petgraph::visit::IntoNodeReferences;
 
     #[test]
     fn aeg_from_init() {
@@ -579,5 +596,189 @@ mod tests {
         assert_eq!(aeg.node_count(), 3);
         // 1 program order
         assert_eq!(aeg.edge_count(), 1);
+    }
+
+    #[test]
+    fn ifs() {
+        // Fig 9. and 10. of Don't Sit on the Fence
+        let program = r#"
+    let x: u32 = 0;
+    let y: u32 = 0;
+    let z: u32 = 0;
+    thread t1 {
+        let a: u32 = 0;
+        x = 42;
+        if (1 == 1) {
+            y = 1;
+        } else {
+            a = z;
+        }
+        x = 1;
+    }
+    thread t2 {
+        let b: u32 = y;
+        let c: u32 = z;
+        let d: u32 = x;
+    }
+    final {}
+    "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = create_aeg(&program);
+        dbg!(Dot::with_config(&aeg, &[]));
+
+        assert_eq!(aeg.node_count(), 7);
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
+                .count(),
+            6
+        );
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::Competing))
+                .count(),
+            3 * 2 // doubled because cmp edges are undirected
+        );
+
+        // find the t1 nodes
+        let ([wx1, wy, wx2], [rz]) = get_nodes(&aeg, "t1", &["x", "y", "x"], &["z"]);
+
+        // ensure we have the correct structure
+        assert!(aeg.contains_edge(wx1, wy));
+        assert!(aeg.contains_edge(wx1, rz));
+        assert!(aeg.contains_edge(wy, wx2));
+        assert!(aeg.contains_edge(rz, wx2));
+    }
+
+    #[test]
+    fn whiles() {
+        let program = r#"
+    let x: u32 = 0;
+    let y: u32 = 0;
+    let z: u32 = 0;
+    thread t1 {
+        x = 32;
+        while (x == 0) {
+            y = 1;
+        }
+        z = 1;
+    }
+    final {}
+    "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = create_aeg(&program);
+        dbg!(Dot::with_config(&aeg, &[]));
+
+        assert_eq!(aeg.node_count(), 4);
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
+                .count(),
+            4
+        );
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::Competing))
+                .count(),
+            0
+        );
+
+        // find the t1 nodes
+        let ([wx, wy, wz], [rx]) = get_nodes(&aeg, "t1", &["x", "y", "z"], &["x"]);
+
+        // ensure we have the correct structure
+        assert!(aeg.contains_edge(wx, rx));
+        assert!(aeg.contains_edge(rx, wy));
+        assert!(aeg.contains_edge(wy, rx));
+        assert!(aeg.contains_edge(rx, wz));
+    }
+
+    #[test]
+    fn whiles_no_condition() {
+        let program = r#"
+    let x: u32 = 0;
+    let y: u32 = 0;
+    let z: u32 = 0;
+    thread t1 {
+        let a: u32 = 0;
+        x = 32;
+        while (a == 0) {
+            y = 1;
+            a = y;
+        }
+        z = 1;
+    }
+    final {}
+    "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = create_aeg(&program);
+        dbg!(Dot::with_config(&aeg, &[]));
+
+        assert_eq!(aeg.node_count(), 4);
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
+                .count(),
+            5
+        );
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::Competing))
+                .count(),
+            0
+        );
+
+        // find the t1 nodes
+        let ([wx, wy, wz], [ry]) = get_nodes(&aeg, "t1", &["x", "y", "z"], &["y"]);
+        
+        // ensure we have the correct structure
+        assert!(aeg.contains_edge(wx, wy));
+        assert!(aeg.contains_edge(wy, ry));
+        assert!(aeg.contains_edge(ry, wy));
+        assert!(aeg.contains_edge(wx, wz));
+        assert!(aeg.contains_edge(ry, wz));
+    }
+    
+    fn get_nodes<const N: usize, const M: usize>(aeg: &Aeg, thread: &str, writes: &[&str; N], reads: &[&str; M]) -> ([NodeIndex; N], [NodeIndex; M]) {
+        let mut write_nodes = vec![];
+        let mut read_nodes = vec![];
+
+        let mut wi = 0;
+        let mut ri = 0;
+        for (id, node) in aeg.node_references() {
+            match node {
+                Node::Write(t, addr) if t == thread => {
+                    if wi < writes.len() && writes[wi] == addr.as_str() {
+                        write_nodes.push(id);
+                        wi += 1;
+                    } else {
+                        panic!()
+                    }
+                }
+                Node::Read(t, addr) if t == thread => {
+                    if ri < reads.len() && reads[ri] == addr.as_str() {
+                        read_nodes.push(id);
+                        ri += 1;
+                    } else {
+                        panic!()
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        (write_nodes.try_into().unwrap(), read_nodes.try_into().unwrap())
     }
 }
