@@ -135,7 +135,15 @@ fn create_aeg(program: &Program) -> Aeg {
         let mut read_nodes = vec![];
         let mut write_nodes = vec![];
         for stmt in &thread.instructions {
-            handle_statement(&mut g, &mut last_node, &mut read_nodes, &mut write_nodes, stmt, program.global_vars.as_ref(), thread.name.clone());
+            handle_statement(
+                &mut g,
+                &mut last_node,
+                &mut read_nodes,
+                &mut write_nodes,
+                stmt,
+                program.global_vars.as_ref(),
+                thread.name.clone(),
+            );
         }
         thread_nodes.push((write_nodes, read_nodes));
     }
@@ -256,7 +264,15 @@ fn handle_statement(
             let mut thn_branch = last_node.clone();
             let mut first_thn = None;
             for stmt in thn {
-                let f = handle_statement(graph, &mut thn_branch, read_nodes, write_nodes, stmt, globals, thread.clone());
+                let f = handle_statement(
+                    graph,
+                    &mut thn_branch,
+                    read_nodes,
+                    write_nodes,
+                    stmt,
+                    globals,
+                    thread.clone(),
+                );
                 if first_thn.is_none() {
                     first_thn = f;
                 }
@@ -264,7 +280,15 @@ fn handle_statement(
 
             let mut first_els = None;
             for stmt in els {
-                let f = handle_statement(graph, last_node, read_nodes, write_nodes, stmt, globals, thread.clone());
+                let f = handle_statement(
+                    graph,
+                    last_node,
+                    read_nodes,
+                    write_nodes,
+                    stmt,
+                    globals,
+                    thread.clone(),
+                );
                 if first_els.is_none() {
                     first_els = f;
                 }
@@ -275,7 +299,7 @@ fn handle_statement(
                     last_node.push(*node);
                 }
             }
-            
+
             if first.is_some() {
                 first
             } else if let Some(mut ft) = first_thn {
@@ -303,25 +327,33 @@ fn handle_statement(
 
             // Move the read nodes into the read node list
             read_nodes.append(&mut reads);
-            
+
             // Store the branch node for the condition
             let branch = last_node.clone();
 
             let mut first_body = None;
             for stmt in body {
-                let f = handle_statement(graph, last_node, read_nodes, write_nodes, stmt, globals, thread.clone());
+                let f = handle_statement(
+                    graph,
+                    last_node,
+                    read_nodes,
+                    write_nodes,
+                    stmt,
+                    globals,
+                    thread.clone(),
+                );
                 if first_body.is_none() {
                     first_body = f;
                 }
             }
-            
+
             // Condition contains a read
             if let Some(f) = first_cond {
                 // Add edges from the last node to the first
                 for node in f.iter() {
                     connect_previous(graph, last_node, *node);
                 }
-                
+
                 // Next node should connect to the end of the condition
                 *last_node = branch;
                 Some(f)
@@ -332,7 +364,7 @@ fn handle_statement(
                 for node in f.iter() {
                     connect_previous(graph, last_node, *node);
                 }
-                
+
                 // Next node should connect to the end of the body and the nodes before the while loop
                 last_node.append(&mut branch.clone());
                 Some(f)
@@ -383,7 +415,9 @@ fn handle_expression(
         Expr::Var(vread) => {
             if globals.contains(vread) {
                 let node = graph.add_node(Node::Read(thread, vread.clone()));
-                reads.last().map(|i| graph.add_edge(*i, node, AegEdge::ProgramOrder));
+                reads
+                    .last()
+                    .map(|i| graph.add_edge(*i, node, AegEdge::ProgramOrder));
                 reads.push(node);
             }
         }
@@ -742,7 +776,7 @@ mod tests {
 
         // find the t1 nodes
         let ([wx, wy, wz], [ry]) = get_nodes(&aeg, "t1", &["x", "y", "z"], &["y"]);
-        
+
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx, wy));
         assert!(aeg.contains_edge(wy, ry));
@@ -750,8 +784,13 @@ mod tests {
         assert!(aeg.contains_edge(wx, wz));
         assert!(aeg.contains_edge(ry, wz));
     }
-    
-    fn get_nodes<const N: usize, const M: usize>(aeg: &Aeg, thread: &str, writes: &[&str; N], reads: &[&str; M]) -> ([NodeIndex; N], [NodeIndex; M]) {
+
+    fn get_nodes<const N: usize, const M: usize>(
+        aeg: &Aeg,
+        thread: &str,
+        writes: &[&str; N],
+        reads: &[&str; M],
+    ) -> ([NodeIndex; N], [NodeIndex; M]) {
         let mut write_nodes = vec![];
         let mut read_nodes = vec![];
 
@@ -779,6 +818,9 @@ mod tests {
             }
         }
 
-        (write_nodes.try_into().unwrap(), read_nodes.try_into().unwrap())
+        (
+            write_nodes.try_into().unwrap(),
+            read_nodes.try_into().unwrap(),
+        )
     }
 }
