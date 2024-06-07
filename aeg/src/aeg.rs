@@ -101,9 +101,9 @@ impl AbstractEventGraph {
         let mut stack = vec![node];
         let mut discovered = self.graph.visit_map();
 
-        while let Some(node) = stack.pop() {
-            if discovered.visit(node) {
-                for succ in close_po_neighbors(node) {
+        while let Some(curr) = stack.pop() {
+            if discovered.visit(curr) {
+                for succ in close_po_neighbors(curr) {
                     if !discovered.is_visited(&succ) {
                         stack.push(succ);
                     }
@@ -114,6 +114,7 @@ impl AbstractEventGraph {
         discovered
             .ones()
             .map(|one| NodeIndex::from(one as u32))
+            .filter(|n| *n != node)
             .collect()
     }
 
