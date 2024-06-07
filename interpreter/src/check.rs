@@ -60,38 +60,51 @@ fn check_threads(threads: &[Thread], globals: &HashSet<String>) -> Result<HashMa
         thread_ids.insert(thread.name.clone());
 
         let mut locals = HashSet::new();
-        for statement in &thread.instructions {
-            match statement {
-                Statement::Assign(x, expr) => {
-                    if locals.contains(x) {
-                        return Err(Error::DuplicateAssign(statement.clone()));
-                    }
-
-                    match check_expression(expr, globals, &locals) {
-                        Ok(()) => {}
-                        Err(e) => return Err(e),
-                    }
-
-                    locals.insert(x.clone());
-                }
-                Statement::Modify(x, expr) => {
-                    if !globals.contains(x) && !locals.contains(x) {
-                        return Err(Error::UndefinedModify(statement.clone()));
-                    }
-
-                    match check_expression(expr, globals, &locals) {
-                        Ok(()) => {}
-                        Err(e) => return Err(e),
-                    }
-                }
-                Statement::Fence(_) => {}
-            }
-        }
+        check_statements(&thread.instructions, globals, &mut locals)?;
 
         thread_locals.insert(thread.name.clone(), locals);
     }
 
     Ok(thread_locals)
+}
+
+fn check_statements(statements: &[Statement], globals: &HashSet<String>, locals: &mut HashSet<String>) -> Result<(), Error> {
+    statements.iter().try_for_each(|s| check_statement(s, globals, locals))
+}
+
+fn check_statement(statement: &Statement, globals: &HashSet<String>, locals: &mut HashSet<String>) -> Result<(), Error> {
+    match statement {
+        Statement::Assign(x, expr) => {
+            if locals.contains(x) {
+                return Err(Error::DuplicateAssign(statement.clone()));
+            }
+
+            check_expression(expr, globals, locals)?;
+            locals.insert(x.clone());
+            Ok(())
+        }
+        Statement::Modify(x, expr) => {
+            globals.get(x).or_else(|| locals.get(x)).ok_or(Error::UndefinedModify(statement.clone()))?;
+            check_expression(expr, globals, locals)
+        }
+        Statement::Fence(_) => Ok(()),
+        Statement::If(cond, thn, els) => {
+            check_cond_expr(cond, globals, locals)
+                .and(check_statements(thn, globals, locals))
+                .and(check_statements(els, globals, locals))
+        }
+        Statement::While(cond, body) => {
+            check_cond_expr(cond, globals, locals).and(check_statements(body, globals, locals))
+        }
+    }
+}
+
+fn check_cond_expr(cond_expr: &CondExpr, globals: &HashSet<String>, locals: &HashSet<String>) -> Result<(), Error> {
+    match cond_expr {
+        CondExpr::Neg(e) => check_cond_expr(e, globals, locals),
+        CondExpr::And(e1, e2) => check_cond_expr(e1, globals, locals).and(check_cond_expr(e2, globals, locals)),
+        CondExpr::Eq(e1, e2) => check_expression(e1, globals, locals).and(check_expression(e2, globals, locals)),
+    }
 }
 
 fn check_assert(assert: &[LogicExpr], locals: &HashMap<String, HashSet<String>>) -> Result<(), Error> {
@@ -203,6 +216,7 @@ mod tests {
                     ))
                 )
             ]),
+            global_vars: vec![],
         };
 
         assert_eq!(check(&program), Ok(()));

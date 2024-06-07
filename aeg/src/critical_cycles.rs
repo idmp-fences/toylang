@@ -15,7 +15,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct CriticalCycle(Vec<NodeIndex>);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Architecture {
     Tso,
     Arm,
@@ -43,6 +43,14 @@ where
     has_delay: bool,
     architecture: Architecture,
 }
+
+impl PartialEq for IncompleteMinimalCycle<ThreadId, MemoryId> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cycle == other.cycle && self.architecture == other.architecture
+    }
+}
+
+impl Eq for IncompleteMinimalCycle<ThreadId, MemoryId> {}
 
 impl IncompleteMinimalCycle<ThreadId, MemoryId> {
     fn new_tso() -> Self {
@@ -227,9 +235,9 @@ pub(crate) fn critical_cycles(
 
     // DFS state, reset at each node
     let mut stack = Vec::new();
-    let mut discovered = aeg.graph.visit_map();
+    let mut discovered = Vec::new();
 
-    // Nodes for which critical cycles have been found.
+    // Nodes for which all critical cycles have been found.
     let mut explored = Vec::new();
 
     // Go through all nodes in the graph, starting a DFS from each node to find critical cycles
@@ -244,7 +252,8 @@ pub(crate) fn critical_cycles(
         while let Some(cycle) = stack.pop() {
             let node = *cycle.last().expect("cycle is empty");
 
-            if discovered.visit(node) {
+            if !discovered.contains(&cycle) {
+                discovered.push(cycle.clone());
                 for succ in aeg.neighbors(node) {
                     if !explored.contains(&succ) {
                         let mut cycle = cycle.clone();
@@ -408,11 +417,117 @@ mod test {
 
         let ccs = critical_cycles(&aeg, &Architecture::Power);
         dbg!(&ccs);
-        assert_eq!(ccs.len(), 4);
+
+        // There are actually 5 critical cycles, 1 more than the 4 suggested in the fig 16
+        // The additional cycle involves threads 1, 3, and 4
+        // Wt(t1) -po-> Wy(t1) -cmp-> Wy(t4) -cmp-> Ry(t3) -po-> Rt(t3) -cmp-> Wt(t1)
+        assert_eq!(ccs.len(), 5);
 
         let ccs = critical_cycles(&aeg, &Architecture::Tso);
         dbg!(&ccs);
         assert_eq!(ccs.len(), 1);
+    }
+
+    #[test]
+    fn multiple_ccs_one_source() {
+        // In this program the first Wx has 2 critical cycles originating from it
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        thread t1 {
+            x = 1;
+            y = 2;
+            x = 3;
+        }
+        thread t2 {
+            let b: u32 = y;
+            let d: u32 = x;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = AbstractEventGraph::from(&program);
+        println!("{:?}", Dot::with_config(&aeg.graph, &[]));
+        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        dbg!(&ccs);
+        assert_eq!(ccs.len(), 2)
+    }
+
+    #[test]
+    fn ifs() {
+        // Fig 9. and 10. of Don't Sit on the Fence
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        let z: u32 = 0;
+        thread t1 {
+            let a: u32 = 0;
+            x = 42;
+            if (1 == 1) {
+                y = 1;
+            } else {
+                a = z;
+            }
+            x = 1;
+        }
+        thread t2 {
+            let b: u32 = y;
+            let c: u32 = z;
+            let d: u32 = x;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = AbstractEventGraph::from(&program);
+        println!("{:?}", Dot::with_config(&aeg.graph, &[]));
+        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        dbg!(&ccs);
+        assert_eq!(ccs.len(), 2)
+    }
+
+    #[test]
+    fn whiles() {
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        thread t1 {
+            while (x == 0) {
+                y = 1;
+            }
+        }
+        thread t2 {
+            let a: u32 = 0;
+            while (!(a == 3)) {
+            a = 3;
+            }
+            x = 1;
+            a = y;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = AbstractEventGraph::from(&program);
+
+        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        dbg!(&ccs);
+    }
+
+    #[test]
+    fn ifs_and_whiles_dekker_sc() {
+        let program = include_str!("../../programs/dekker-sc.toy");
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = AbstractEventGraph::from(&program);
+
+        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        dbg!(&ccs);
     }
 
     // This panics because fences aren't implemented into the AEG yet.
