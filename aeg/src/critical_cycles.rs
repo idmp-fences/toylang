@@ -490,14 +490,42 @@ mod test {
     }
 
     #[test]
-    fn ifs_and_whiles() {
+    fn whiles() {
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        thread t1 {
+            while (x == 0) {
+                y = 1;
+            }
+        }
+        thread t2 {
+            let a: u32 = 0;
+            while (!(a == 3)) {
+            a = 3;
+            }
+            x = 1;
+            a = y;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = AbstractEventGraph::from(&program);
+
+        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        dbg!(&ccs);
+    }
+
+    #[test]
+    fn ifs_and_whiles_dekker_sc() {
         let program = include_str!("../../programs/dekker-sc.toy");
 
         let program = parser::parse(program).unwrap();
 
         let aeg = AbstractEventGraph::from(&program);
 
-        // Stack overflow!
         let ccs = critical_cycles(&aeg, &Architecture::Power);
         dbg!(&ccs);
     }

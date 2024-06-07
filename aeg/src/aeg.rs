@@ -1,7 +1,7 @@
 use petgraph::{
     adj::EdgeIndex,
     graph::{DiGraph, NodeIndex},
-    visit::EdgeRef,
+    visit::{EdgeRef, VisitMap, Visitable},
 };
 
 use ast::*;
@@ -86,23 +86,35 @@ impl AbstractEventGraph {
         close_non_po_neighbors
     }
 
+    /// Find all the po neighbors of a node connected through (transitive) po edges
     fn transitive_po_neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
-        // find all the po neighbors of this node, and all the po neighbors of them
-        let close_po_neighbors = self
-            .graph
-            .edges(node)
-            .filter_map(|edge| match edge.weight() {
-                AegEdge::ProgramOrder => Some(edge.target()),
-                AegEdge::Competing => None,
-            });
+        let close_po_neighbors = |node| {
+            self.graph
+                .edges(node)
+                .filter_map(|edge| match edge.weight() {
+                    AegEdge::ProgramOrder => Some(edge.target()),
+                    AegEdge::Competing => None,
+                })
+        };
 
-        let mut neighbors: Vec<NodeIndex> = close_po_neighbors.clone().collect();
+        // Use DFS as backward jump can create PO loops
+        let mut stack = vec![node];
+        let mut discovered = self.graph.visit_map();
 
-        for n in close_po_neighbors {
-            neighbors.append(&mut self.transitive_po_neighbors(n))
+        while let Some(node) = stack.pop() {
+            if discovered.visit(node) {
+                for succ in close_po_neighbors(node) {
+                    if !discovered.is_visited(&succ) {
+                        stack.push(succ);
+                    }
+                }
+            }
         }
 
-        neighbors
+        discovered
+            .ones()
+            .map(|one| NodeIndex::from(one as u32))
+            .collect()
     }
 
     /// Check if two nodes are connected through po+,
