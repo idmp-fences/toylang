@@ -1,5 +1,5 @@
 [workspace]
-members = ["parser", "interpreter", "ast", "aeg"]
+members = ["parser", "interpreter", "ast", "aeg", "generator"]
 resolver = "2"
 
 # These modules are automatically included in eg `cargo doc` and `cargo test` instead of having to pass --workspace

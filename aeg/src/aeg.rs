@@ -413,6 +413,10 @@ fn handle_condition(
             handle_expression(graph, reads, e1, globals, thread.clone());
             handle_expression(graph, reads, e2, globals, thread);
         }
+        CondExpr::Leq(e1, e2) => {
+            handle_expression(graph, reads, e1, globals, thread.clone());
+            handle_expression(graph, reads, e2, globals, thread);
+        }
     }
 }
 
