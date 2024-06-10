@@ -94,7 +94,7 @@ fn parse_init(pair: pest::iterators::Pair<Rule>) -> Init {
 }
 
 // Match something that is modify/assign/fence
-fn parse_statement(pair: pest::iterators::Pair<Rule>, globals: &Vec<Name>) -> Statement {
+fn parse_statement(pair: pest::iterators::Pair<Rule>, globals: &[Name]) -> Statement {
     debug_assert_eq!(pair.as_rule(), Rule::stmt);
 
     let pair = pair.into_inner().next().unwrap();
@@ -128,10 +128,82 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>, globals: &Vec<Name>) -> St
             };
             Statement::Fence(fence)
         }
+        Rule::r#if => {
+            let mut pair = pair.into_inner();
+            let cond = parse_cond_expr(pair.next().unwrap());
+
+            let mut thn = vec![];
+            for inner_pair in pair.next().unwrap().into_inner() {
+                thn.push(parse_statement(inner_pair, globals));
+            }
+
+            let mut els = vec![];
+            for inner_pair in pair.next().unwrap().into_inner() {
+                els.push(parse_statement(inner_pair, globals));
+            }
+
+            Statement::If(cond, thn, els)
+        }
+        Rule::r#while => {
+            let mut pair = pair.into_inner();
+            let cond = parse_cond_expr(pair.next().unwrap());
+
+            let mut body = vec![];
+            for inner_pair in pair {
+                body.push(parse_statement(inner_pair, globals));
+            }
+
+            Statement::While(cond, body)
+        }
         _ => unreachable!(
             "Expected assign, modify, or fence, got {:?}",
             pair.as_rule()
         ),
+    }
+}
+
+/// Parse a condition expression
+/// ```text
+/// condexpr = { atom ~ ("&&" ~ atom)* }
+/// ```
+fn parse_cond_expr(pair: pest::iterators::Pair<Rule>) -> CondExpr {
+    debug_assert_eq!(pair.as_rule(), Rule::condexpr);
+
+    let mut pairs = pair.into_inner();
+    let mut expr = parse_cond_atom(pairs.next().unwrap());
+    // If there is more than 1 token, we need to chain them with And
+    for op_pair in pairs {
+        let next_atom = parse_cond_atom(op_pair);
+        expr = CondExpr::And(Box::new(expr), Box::new(next_atom));
+    }
+    expr
+}
+
+/// Parse a condition atom
+/// ```text
+/// condatom = {
+///     condneg
+///   | condparen
+///   | condeq
+/// }
+/// ```
+fn parse_cond_atom(pair: pest::iterators::Pair<Rule>) -> CondExpr {
+    debug_assert_eq!(pair.as_rule(), Rule::condatom);
+
+    let inner_pair = pair.into_inner().next().unwrap();
+    match inner_pair.as_rule() {
+        Rule::condeq => {
+            let mut inner_pairs = inner_pair.into_inner();
+            let left = parse_expression(inner_pairs.next().unwrap());
+            let right = parse_expression(inner_pairs.next().unwrap());
+            CondExpr::Eq(left, right)
+        },
+        Rule::condneg => {
+            let inner_pair = inner_pair.into_inner().next().unwrap();
+            CondExpr::Neg(Box::new(parse_cond_expr(inner_pair)))
+        },
+        Rule::condparen => parse_cond_expr(inner_pair.into_inner().next().unwrap()),
+        _ => unreachable!("Expected eq, neg, or paren, got {:?}", inner_pair.as_rule()),
     }
 }
 
@@ -143,10 +215,10 @@ fn parse_logic_expr(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
     debug_assert_eq!(pair.as_rule(), Rule::logicexpr);
 
     let mut pairs = pair.into_inner();
-    let mut expr = parse_atom(pairs.next().unwrap());
+    let mut expr = parse_logic_atom(pairs.next().unwrap());
     // If there is more than 1 token, we need to chain them with And
-    while let Some(op_pair) = pairs.next() {
-        let next_atom = parse_atom(op_pair);
+    for op_pair in pairs {
+        let next_atom = parse_logic_atom(op_pair);
         expr = LogicExpr::And(Box::new(expr), Box::new(next_atom));
     }
     expr
@@ -154,16 +226,16 @@ fn parse_logic_expr(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
 
 /// Parse an atom
 /// ```text
-/// atom  =  {
+/// logicatom  =  {
 ///     neg
 ///   | paren
 ///   | eq
 /// }
 /// ```
-fn parse_atom(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
+fn parse_logic_atom(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
     debug_assert_eq!(
         pair.as_rule(),
-        Rule::atom,
+        Rule::logicatom,
         "Expected atom, got {:?}",
         pair.as_rule()
     );
@@ -171,17 +243,17 @@ fn parse_atom(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
     let inner_pair = pair.into_inner().next().unwrap();
     match inner_pair.as_rule() {
         // starting with a logicint means we are comparing equality
-        Rule::eq => {
+        Rule::logiceq => {
             let mut inner_pairs = inner_pair.into_inner();
             let left = parse_logic_int(inner_pairs.next().unwrap());
             let right = parse_logic_int(inner_pairs.next().unwrap());
             LogicExpr::Eq(left, right)
         }
-        Rule::neg => {
+        Rule::logicneg => {
             let inner_expr = parse_logic_expr(inner_pair.into_inner().next().unwrap());
             LogicExpr::Neg(Box::new(inner_expr))
         }
-        Rule::paren => parse_logic_expr(inner_pair.into_inner().next().unwrap()),
+        Rule::logicparen => parse_logic_expr(inner_pair.into_inner().next().unwrap()),
         _ => unreachable!("Expected eq, neg, or paren, got {:?}", inner_pair.as_rule()),
     }
 }
@@ -244,7 +316,7 @@ mod tests {
     fn parse_assign() {
         let source = "let hello: u32 = 42;";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
-        let stmt = parse_statement(program.next().unwrap(), &vec![]);
+        let stmt = parse_statement(program.next().unwrap(), &[]);
         assert_eq!(stmt, Statement::Assign("hello".to_owned(), Expr::Num(42)));
     }
 
@@ -252,7 +324,7 @@ mod tests {
     fn parse_modify() {
         let source = "y = 33;";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
-        let stmt = parse_statement(program.next().unwrap(), &vec![]);
+        let stmt = parse_statement(program.next().unwrap(), &[]);
         assert_eq!(stmt, Statement::Modify("y".to_owned(), Expr::Num(33)));
     }
 
@@ -260,8 +332,31 @@ mod tests {
     fn parse_fence() {
         let source = "Fence(WR);";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
-        let stmt = parse_statement(program.next().unwrap(), &vec![]);
+        let stmt = parse_statement(program.next().unwrap(), &[]);
         assert_eq!(stmt, Statement::Fence(FenceType::WR));
+    }
+
+    #[test]
+    fn parse_if() {
+        let source = "if (x == 0) { y = 1; } else { y = 2; }";
+        let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
+        let stmt = parse_statement(program.next().unwrap(), &[]);
+        assert_eq!(stmt, Statement::If(
+            CondExpr::Eq(Expr::Var("x".to_owned()), Expr::Num(0)),
+            vec![Statement::Modify("y".to_owned(), Expr::Num(1))],
+            vec![Statement::Modify("y".to_owned(), Expr::Num(2))],
+        ));
+    }
+    
+    #[test]
+    fn parse_while() {
+        let source = "while (x == 0) { y = 1; }";
+        let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
+        let stmt = parse_statement(program.next().unwrap(), &[]);
+        assert_eq!(stmt, Statement::While(
+            CondExpr::Eq(Expr::Var("x".to_owned()), Expr::Num(0)),
+            vec![Statement::Modify("y".to_owned(), Expr::Num(1))],
+        ));
     }
 
     #[test]

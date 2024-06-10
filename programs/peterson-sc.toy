@@ -1,0 +1,20 @@
+let x: u32 = 0;
+let y: u32 = 0;
+let turn: u32 = 0;
+
+thread t1 {
+    x = 1;
+    turn = 0;
+    while (!(y == 0) && (turn == 0)) { }
+    x = 0;
+}
+
+thread t2 {
+    y = 1;
+    turn = 1;
+    while (!(x == 0) && (turn == 1)) { }
+    y = 0;
+}
+
+final {
+}

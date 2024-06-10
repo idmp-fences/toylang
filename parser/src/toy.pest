@@ -4,10 +4,15 @@ stmt        =  {
     modify
   | assign
   | fence
+  | if
+  | while
 }
+stmts  = { stmt* }
 modify = { name ~ "=" ~ expr ~ ";" }
-fence = { "Fence" ~ "(" ~ fencemarker ~ ")" ~ ";" }
+fence  = { "Fence" ~ "(" ~ fencemarker ~ ")" ~ ";" }
 assign = { "let" ~ name ~ ":" ~ "u32" ~ "=" ~ expr ~ ";" }
+if     = { "if" ~ "(" ~ condexpr ~ ")" ~ "{" ~ stmts ~ "}" ~ "else" ~ "{" ~ stmts ~ "}" }
+while  = { "while" ~ "(" ~ condexpr ~ ")" ~ "{" ~ stmt* ~ "}" }
 
 init        =  { assign }
 final       =  { "final" ~ "{" ~ assert* ~ "}" }
@@ -16,21 +21,34 @@ fencemarker =  { "WR" | "WW" | "RW" | "RR" }
 
 assert      =  { "assert" ~ "(" ~ logicexpr ~ ")" ~ ";" }
 
-atom  =  {
-    neg
-  | paren
-  | eq
+condatom = {
+    condneg
+  | condparen
+  | condeq
 }
-neg = { "!" ~ logicexpr }
-paren = { "(" ~ logicexpr ~ ")" }
-eq = { logicint ~ "==" ~ logicint }
+
+condneg = { "!" ~ condexpr }
+condparen = { "(" ~ condexpr ~ ")" }
+condeq = { expr ~ "==" ~ expr }
 
 // '&&' has lowest precedence
-logicexpr = { atom ~ ("&&" ~ atom)* } 
+condexpr = { condatom ~ ("&&" ~ condatom)* }
+
+logicatom  =  {
+    logicneg
+  | logicparen
+  | logiceq
+}
+logicneg = { "!" ~ logicexpr }
+logicparen = { "(" ~ logicexpr ~ ")" }
+logiceq = { logicint ~ "==" ~ logicint }
+
+// '&&' has lowest precedence
+logicexpr = { logicatom ~ ("&&" ~ logicatom)* }
 
 logicint    =  { logicvar | num }
 logicvar    = @{ name ~ "." ~ name }
-name        = @{ ('a'..'z' | 'A'..'Z') ~ ('a'..'z' | 'A'..'Z' | ASCII_DIGIT)* }
+name        = @{ ASCII_ALPHA ~ ASCII_ALPHANUMERIC* }
 num         = @{ ASCII_DIGIT+ }
 WHITESPACE  = _{ " " | NEWLINE }
 
