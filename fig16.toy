@@ -1,0 +1,35 @@
+let x: u32 = 0;
+let y: u32 = 0;
+let z: u32 = 0;
+let t: u32 = 0;
+
+thread t1 {
+    t = 1;
+    y = 1;
+}
+
+thread t2 {
+    let a: u32 = z;
+    x = 2;
+}
+
+thread t3 {
+    let a: u32 = x;
+    let b: u32 = y;
+    z = 3;
+    let c: u32 = t;
+}
+
+thread t4 {
+    let a: u32 = z;
+    y = 4;
+}
+
+thread t5 {
+    t = 5;
+    let a: u32 = z;
+}
+
+final {
+    assert( 0 == 0 );
+}

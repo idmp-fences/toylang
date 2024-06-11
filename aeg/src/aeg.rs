@@ -1,6 +1,7 @@
 use petgraph::{
     adj::EdgeIndex,
-    graph::{DiGraph, NodeIndex},
+    algo::astar,
+    graph::{DiGraph, Edge, NodeIndex},
     visit::{EdgeRef, VisitMap, Visitable},
 };
 
@@ -8,11 +9,15 @@ use ast::*;
 
 use crate::critical_cycles::{self, Architecture, CriticalCycle};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 pub(crate) type ThreadId = String;
 pub(crate) type MemoryId = String;
 
 // todo: use `usize` to represent memory addresses
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Node {
     Read(ThreadId, MemoryId),
     Write(ThreadId, MemoryId),
@@ -36,6 +41,7 @@ impl Node {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum AegEdge {
     /// Abstracts all po edges that connect two events in program order.
     /// Note that this does not include po+, the transitive edges. For example, the relation
@@ -47,6 +53,7 @@ pub enum AegEdge {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Fence {
     /// mfence in x86, sync in Power, dmb in ARM
     Full,
@@ -124,12 +131,27 @@ impl AbstractEventGraph {
         self.transitive_po_neighbors(a).contains(&b)
     }
 
-    pub fn tso_critical_cycles(&self) -> Vec<CriticalCycle> {
-        critical_cycles::critical_cycles(self, &Architecture::Tso)
+    /// Returns the shortest program order path between two nodes, if it exists
+    pub fn po_between(&self, a: NodeIndex, b: NodeIndex) -> Option<Vec<NodeIndex>> {
+        if !self.is_po_connected(a, b) {
+            return None;
+        }
+
+        astar(
+            &self.graph,
+            a,
+            |finish| finish == b,
+            |edge| match edge.weight() {
+                AegEdge::ProgramOrder => 0,
+                AegEdge::Competing => 100,
+            },
+            |_| 0,
+        )
+        .map(|(_cost, path)| path)
     }
 
-    pub fn potential_fences(&self, cycles: &[CriticalCycle]) -> Vec<EdgeIndex> {
-        critical_cycles::potential_fences(self, cycles)
+    pub fn tso_critical_cycles(&self) -> Vec<CriticalCycle> {
+        critical_cycles::critical_cycles(self, &Architecture::Tso)
     }
 }
 
