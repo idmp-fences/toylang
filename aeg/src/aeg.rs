@@ -376,7 +376,7 @@ fn handle_statement(
             // Add a po edge from the last node to the first read
             let mut first_cond = None;
             if let Some(read) = reads.first() {
-                first_cond = Some(vec![*read]);
+                first_cond = Some(*read);
                 connect_previous(graph, last_node, *read);
             }
             if let Some(read) = reads.last() {
@@ -408,13 +408,11 @@ fn handle_statement(
             // Condition contains a read
             if let Some(f) = first_cond {
                 // Add edges from the last node to the first
-                for node in f.iter() {
-                    connect_previous(graph, last_node, *node);
-                }
+                connect_previous(graph, last_node, f);
 
                 // Next node should connect to the end of the condition
                 *last_node = branch;
-                Some(f)
+                Some(vec![f])
             }
             // Body contains a read or write operation
             else if let Some(f) = first_body {
@@ -437,8 +435,10 @@ fn handle_statement(
 
 /// Connect each node in `last_node` to `current_node` with a directed PO edge
 fn connect_previous(graph: &mut Aeg, last_node: &[NodeIndex], current_node: NodeIndex) {
-    for node in last_node {
-        graph.update_edge(*node, current_node, AegEdge::ProgramOrder);
+    for &node in last_node {
+        if node != current_node {
+            graph.update_edge(node, current_node, AegEdge::ProgramOrder);
+        }
     }
 }
 
@@ -849,6 +849,138 @@ mod tests {
         assert!(aeg.contains_edge(ry, wy));
         assert!(aeg.contains_edge(wx, wz));
         assert!(aeg.contains_edge(ry, wz));
+    }
+
+    #[test]
+    fn whiles_no_body() {
+        let program = r#"
+        let x: u32 = 0;
+        thread t1 {
+            let a: u32 = 0;
+            x = 0;
+            while (x == 0) {
+                a = 3;
+            }
+            x = 1;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = create_aeg(&program);
+        dbg!(Dot::with_config(&aeg, &[]));
+
+        assert_eq!(aeg.node_count(), 3);
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
+                .count(),
+            2
+        );
+
+        // find the t1 nodes
+        let ([wx1, wx2], [rx]) = get_nodes(&aeg, "t1", &["x", "x"], &["x"]);
+
+        // ensure we have the correct structure
+        assert!(aeg.contains_edge(wx1, rx));
+        assert!(aeg.contains_edge(rx, wx2));
+    }
+
+    #[test]
+    fn whiles_no_body_no_condition() {
+        let program = r#"
+        let x: u32 = 0;
+        thread t1 {
+            let a: u32 = 0;
+            x = 0;
+            while (a == 0) {
+                a = 3;
+            }
+            x = 1;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = create_aeg(&program);
+        dbg!(Dot::with_config(&aeg, &[]));
+
+        assert_eq!(aeg.node_count(), 2);
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
+                .count(),
+            1
+        );
+
+        // find the t1 nodes
+        let ([wx1, wx2], []) = get_nodes(&aeg, "t1", &["x", "x"], &[]);
+
+        // ensure we have the correct structure
+        assert!(aeg.contains_edge(wx1, wx2));
+    }
+
+    #[test]
+    fn while_and_if_with_no_condition() {
+        let program = r#"
+        let x: u32 = 0;
+        let i: u32 = 0;
+        let j: u32 = 0;
+        let z: u32 = 0;
+        thread t1 {
+            let a: u32 = 0;
+            x = 32;
+            while (a == 0) {
+                if (a == 0) {
+                    i = 1;
+                    j = 2;
+                } else {
+                    a = i;
+                    a = j;
+                }
+            }
+            z = 1;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = create_aeg(&program);
+        dbg!(Dot::with_config(&aeg, &[]));
+
+        assert_eq!(aeg.node_count(), 6);
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
+                .count(),
+            11
+        );
+
+        // find the t1 nodes
+        let ([before_while, branch_1_1st, branch_1_2nd, after_while], [branch_2_1st, branch_2_2nd]) =
+            get_nodes(&aeg, "t1", &["x", "i", "j", "z"], &["i", "j"]);
+
+        // ensure we have the correct structure
+        assert!(aeg.contains_edge(before_while, after_while)); // skip connection
+        assert!(aeg.contains_edge(before_while, branch_1_1st)); // branching
+        assert!(aeg.contains_edge(before_while, branch_2_1st));
+
+        assert!(aeg.contains_edge(branch_1_1st, branch_1_2nd)); // normal po order within branch
+        assert!(aeg.contains_edge(branch_2_1st, branch_2_2nd));
+
+        assert!(aeg.contains_edge(branch_2_2nd, branch_2_1st)); // backwards jumps to either branch
+        assert!(aeg.contains_edge(branch_2_2nd, branch_1_1st));
+        assert!(aeg.contains_edge(branch_2_2nd, after_while)); // forward jump to outside of while
+
+        assert!(aeg.contains_edge(branch_1_2nd, branch_1_1st));
+        assert!(aeg.contains_edge(branch_1_2nd, branch_2_1st));
+        assert!(aeg.contains_edge(branch_1_2nd, after_while));
     }
 
     fn get_nodes<const N: usize, const M: usize>(
