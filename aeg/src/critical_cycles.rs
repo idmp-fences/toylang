@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CriticalCycle {
-    cycle: Vec<NodeIndex>,
-    potential_fences: Vec<EdgeIndex>,
+    pub cycle: Vec<NodeIndex>,
+    pub potential_fences: Vec<EdgeIndex>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -541,26 +541,35 @@ mod test {
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
         let ccs = critical_cycles(&aeg, &Architecture::Power);
         dbg!(&ccs);
-        assert_eq!(ccs.len(), 2)
+        assert_eq!(ccs.len(), 2);
+
+        // One of the cycles, passing over the if block, has only 1 potential fence placement
+        // on the skip connection. The other has potential fence placements inside the if block.
+        for cc in ccs {
+            if cc.cycle.len() == 3 {
+                assert_eq!(cc.potential_fences.len(), 1);
+            } else if cc.cycle.len() == 4 {
+                assert_eq!(cc.potential_fences.len(), 3);
+            }
+        }
     }
 
     #[test]
-    fn whiles() {
+    fn cc_through_middle_of_while() {
         let program = r#"
         let x: u32 = 0;
         let y: u32 = 0;
+        let z: u32 = 0;
         thread t1 {
             while (x == 0) {
                 y = 1;
+                x = 1;
             }
+            z = 1;
         }
         thread t2 {
-            let a: u32 = 0;
-            while (!(a == 3)) {
-            a = 3;
-            }
-            x = 1;
-            a = y;
+            let a: u32 = z;
+            let b: u32 = y;
         }
         final {}
         "#;
@@ -569,8 +578,73 @@ mod test {
 
         let aeg = AbstractEventGraph::from(&program);
 
+        dbg!(Dot::new(&aeg.graph));
+
         let ccs = critical_cycles(&aeg, &Architecture::Power);
+        assert_eq!(ccs.len(), 1);
         dbg!(&ccs);
+
+        let actual = CriticalCycle {
+            cycle: vec![
+                NodeIndex::from(1),
+                NodeIndex::from(3),
+                NodeIndex::from(4),
+                NodeIndex::from(5),
+            ],
+            potential_fences: vec![
+                EdgeIndex::from(1),
+                EdgeIndex::from(2),
+                EdgeIndex::from(3),
+                EdgeIndex::from(4),
+            ],
+        };
+
+        assert_eq!(ccs[0].cycle, actual.cycle);
+        assert_eq!(ccs[0].potential_fences, actual.potential_fences);
+    }
+
+    #[test]
+    fn cc_over_a_while() {
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        let z: u32 = 0;
+        thread t1 {
+            y = 1;
+            while (x == 0) {
+                x = 1;
+            }
+            z = 1;
+        }
+        thread t2 {
+            let a: u32 = z;
+            let b: u32 = y;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = AbstractEventGraph::from(&program);
+
+        dbg!(Dot::new(&aeg.graph));
+
+        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        assert_eq!(ccs.len(), 1);
+        dbg!(&ccs);
+
+        let actual = CriticalCycle {
+            cycle: vec![
+                NodeIndex::from(0),
+                NodeIndex::from(3),
+                NodeIndex::from(4),
+                NodeIndex::from(5),
+            ],
+            potential_fences: vec![EdgeIndex::from(0), EdgeIndex::from(3), EdgeIndex::from(4)],
+        };
+
+        assert_eq!(ccs[0].cycle, actual.cycle);
+        assert_eq!(ccs[0].potential_fences, actual.potential_fences);
     }
 
     #[test]
