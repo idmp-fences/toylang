@@ -1,3 +1,5 @@
+use std::iter::from_fn;
+
 use petgraph::{
     adj::EdgeIndex,
     algo::astar,
@@ -78,57 +80,55 @@ impl From<&Program> for AbstractEventGraph {
 
 impl AbstractEventGraph {
     /// Find all neighbors of a node, taking into account transitive po edges
-    pub fn neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
-        let mut po_neighbors = self.transitive_po_neighbors(node);
-        let mut close_non_po_neighbors: Vec<NodeIndex> = self
-            .graph
-            .edges(node)
-            .filter_map(|edge| match edge.weight() {
-                AegEdge::ProgramOrder => None,
-                AegEdge::Competing => Some(edge.target()),
-            })
-            .collect();
-
-        close_non_po_neighbors.append(&mut po_neighbors);
-        close_non_po_neighbors
-    }
-
-    /// Find all the po neighbors of a node connected through (transitive) po edges
-    fn transitive_po_neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
-        let close_po_neighbors = |node| {
+    pub fn neighbors(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        let po_neighbors = self.transitive_po_neighbors(node);
+        let close_non_po_neighbors =
             self.graph
                 .edges(node)
                 .filter_map(|edge| match edge.weight() {
-                    AegEdge::ProgramOrder => Some(edge.target()),
-                    AegEdge::Competing => None,
-                })
-        };
+                    AegEdge::ProgramOrder => None,
+                    AegEdge::Competing => Some(edge.target()),
+                });
 
+        close_non_po_neighbors.chain(po_neighbors)
+    }
+
+    /// Find all the neighbours connected by a po edge, not including transitive po edges
+    pub fn close_po_neighbors(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        self.graph
+            .edges(node)
+            .filter_map(|edge| match edge.weight() {
+                AegEdge::ProgramOrder => Some(edge.target()),
+                AegEdge::Competing => None,
+            })
+    }
+
+    /// Find all the po neighbors of a node connected through (transitive) po edges
+    fn transitive_po_neighbors(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
         // Use DFS as backward jump can create PO loops
-        let mut stack = vec![node];
+        let mut stack: Vec<NodeIndex> = self.close_po_neighbors(node).collect();
         let mut discovered = self.graph.visit_map();
 
-        while let Some(curr) = stack.pop() {
-            if discovered.visit(curr) {
-                for succ in close_po_neighbors(curr) {
-                    if !discovered.is_visited(&succ) {
-                        stack.push(succ);
+        from_fn(move || {
+            while let Some(curr) = stack.pop() {
+                if discovered.visit(curr) {
+                    for succ in self.close_po_neighbors(curr) {
+                        if !discovered.is_visited(&succ) {
+                            stack.push(succ);
+                        }
                     }
+                    return Some(curr);
                 }
             }
-        }
-
-        discovered
-            .ones()
-            .map(|one| NodeIndex::from(one as u32))
-            .filter(|n| *n != node)
-            .collect()
+            return None;
+        })
     }
 
     /// Check if two nodes are connected through po+,
     /// i.e. there is a path of [AegEdge::ProgramOrder] connecting them
     pub fn is_po_connected(&self, a: NodeIndex, b: NodeIndex) -> bool {
-        self.transitive_po_neighbors(a).contains(&b)
+        self.transitive_po_neighbors(a)
+            .any(|neighbor| neighbor == b)
     }
 
     /// Returns the shortest program order path between two nodes, if it exists
@@ -630,10 +630,13 @@ mod tests {
         let node2 = nodes.next().unwrap();
         let node3 = nodes.next().unwrap();
         let node4 = nodes.next().unwrap();
-        assert_eq!(dbg!(aeg.neighbors(node1)).len(), 4);
-        assert_eq!(aeg.neighbors(node2).len(), 3);
-        assert_eq!(aeg.neighbors(node3).len(), 2);
-        assert_eq!(aeg.neighbors(node4).len(), 1);
+        assert_eq!(
+            dbg!(aeg.neighbors(node1).collect::<Vec<NodeIndex>>()).len(),
+            4
+        );
+        assert_eq!(aeg.neighbors(node2).collect::<Vec<NodeIndex>>().len(), 3);
+        assert_eq!(aeg.neighbors(node3).collect::<Vec<NodeIndex>>().len(), 2);
+        assert_eq!(aeg.neighbors(node4).collect::<Vec<NodeIndex>>().len(), 1);
     }
 
     #[test]

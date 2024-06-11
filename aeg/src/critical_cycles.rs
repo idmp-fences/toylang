@@ -141,7 +141,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
         // a delay is a po or rf edge that is not safe (i.e., is relaxed) for a given architecture
         if let Some(last) = self.last() {
             debug_assert!(
-                aeg.neighbors(*last).contains(&node),
+                aeg.neighbors(*last).any(|neighbor| neighbor == node),
                 "node added is not a successor of the last in the cycle"
             );
 
