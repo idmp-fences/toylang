@@ -406,17 +406,42 @@ fn handle_statement(
             }
 
             // Condition contains a read
-            if let Some(f) = first_cond {
-                // Add edges from the last node to the first
-                connect_previous(graph, last_node, f);
+            if let Some(f_cond) = first_cond {
+                if let Some(f_body) = first_body {
+                    // Condition duplication
 
-                // Next node should connect to the end of the condition
-                *last_node = branch;
-                Some(vec![f])
+                    // duplicate the condition node (run handle_condition again?)
+                    let mut reads = vec![];
+                    handle_condition(graph, &mut reads, cond, globals, thread.clone());
+
+                    // add edges from the last node of the body to condition
+                    if let Some(read) = reads.first() {
+                        connect_previous(graph, last_node, *read);
+                    }
+
+                    // add backjump edges from the last condition to the first of the body
+                    let last_read = reads.last().unwrap();
+                    for node in f_body.iter() {
+                        connect_previous(graph, &[*last_read], *node);
+                    }
+
+                    // The next node should connect to both conditions
+                    *last_node = branch;
+                    last_node.push(*last_read);
+
+                    Some(vec![f_cond])
+                } else {
+                    // Add backjump edges from the last node to the first
+                    connect_previous(graph, last_node, f_cond);
+
+                    // Next node should connect to the end of the condition
+
+                    Some(vec![f_cond])
+                }
             }
             // Body contains a read or write operation
             else if let Some(f) = first_body {
-                // Add edges from the last node of the body to the start of the body
+                // Add backjump edges from the last node of the body to the start of the body
                 for node in f.iter() {
                     connect_previous(graph, last_node, *node);
                 }
@@ -764,6 +789,7 @@ mod tests {
         x = 32;
         while (x == 0) {
             y = 1;
+            y = 2;
         }
         z = 1;
     }
@@ -775,13 +801,13 @@ mod tests {
         let aeg = create_aeg(&program);
         dbg!(Dot::with_config(&aeg, &[]));
 
-        assert_eq!(aeg.node_count(), 4);
+        assert_eq!(aeg.node_count(), 6);
 
         assert_eq!(
             aeg.edge_references()
                 .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
                 .count(),
-            4
+            7
         );
 
         assert_eq!(
@@ -792,13 +818,20 @@ mod tests {
         );
 
         // find the t1 nodes
-        let ([wx, wy, wz], [rx]) = get_nodes(&aeg, "t1", &["x", "y", "z"], &["x"]);
+        let ([wx, wy1, wy2, wz], [rx, rx_added]) =
+            get_nodes(&aeg, "t1", &["x", "y", "y", "z"], &["x", "x"]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx, rx));
-        assert!(aeg.contains_edge(rx, wy));
-        assert!(aeg.contains_edge(wy, rx));
+
+        assert!(aeg.contains_edge(rx, wy1));
         assert!(aeg.contains_edge(rx, wz));
+
+        assert!(aeg.contains_edge(wy1, wy2));
+        assert!(aeg.contains_edge(wy2, rx_added));
+
+        assert!(aeg.contains_edge(rx_added, wy1));
+        assert!(aeg.contains_edge(rx_added, wz));
     }
 
     #[test]
