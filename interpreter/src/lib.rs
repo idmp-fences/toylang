@@ -278,6 +278,8 @@ fn evaluate_cond_expression(expr: &CondExpr, state: &mut State, thread_name: &st
             evaluate_cond_expression(e1, state, thread_name) && evaluate_cond_expression(e2, state, thread_name),
         CondExpr::Eq(e1, e2) =>
             evaluate_expression(e1, state, thread_name) == evaluate_expression(e2, state, thread_name),
+        CondExpr::Leq(e1, e2) =>
+            evaluate_expression(e1, state, thread_name) <= evaluate_expression(e2, state, thread_name),
     }
 }
 
@@ -301,10 +303,10 @@ fn assert_expr(expr: &LogicExpr, state: &State) -> bool {
             assert_expr(e1, state) && assert_expr(e2, state)
         }
         LogicExpr::Eq(e1, e2) => {
-            let v1 = assert_logic_int(e1, state);
-            let v2 = assert_logic_int(e2, state);
-
-            v1 == v2
+            assert_logic_int(e1, state) == assert_logic_int(e2, state)
+        }
+        LogicExpr::Leq(e1, e2) => {
+            assert_logic_int(e1, state) <= assert_logic_int(e2, state)
         }
     }
 }

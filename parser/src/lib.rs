@@ -191,12 +191,17 @@ fn parse_cond_atom(pair: pest::iterators::Pair<Rule>) -> CondExpr {
     debug_assert_eq!(pair.as_rule(), Rule::condatom);
 
     let inner_pair = pair.into_inner().next().unwrap();
+    let rule = inner_pair.as_rule();
     match inner_pair.as_rule() {
-        Rule::condeq => {
+        Rule::condeq | Rule::condleq => {
             let mut inner_pairs = inner_pair.into_inner();
             let left = parse_expression(inner_pairs.next().unwrap());
             let right = parse_expression(inner_pairs.next().unwrap());
-            CondExpr::Eq(left, right)
+            match rule {
+                Rule::condeq => CondExpr::Eq(left, right),
+                Rule::condleq => CondExpr::Leq(left, right),
+                _ => unreachable!(),
+            }
         },
         Rule::condneg => {
             let inner_pair = inner_pair.into_inner().next().unwrap();
@@ -241,13 +246,18 @@ fn parse_logic_atom(pair: pest::iterators::Pair<Rule>) -> LogicExpr {
     );
 
     let inner_pair = pair.into_inner().next().unwrap();
-    match inner_pair.as_rule() {
+    let rule = inner_pair.as_rule();
+    match rule {
         // starting with a logicint means we are comparing equality
-        Rule::logiceq => {
+        Rule::logiceq | Rule::logicleq => {
             let mut inner_pairs = inner_pair.into_inner();
             let left = parse_logic_int(inner_pairs.next().unwrap());
             let right = parse_logic_int(inner_pairs.next().unwrap());
-            LogicExpr::Eq(left, right)
+            match rule {
+                Rule::logiceq => LogicExpr::Eq(left, right),
+                Rule::logicleq => LogicExpr::Leq(left, right),
+                _ => unreachable!(),
+            }
         }
         Rule::logicneg => {
             let inner_expr = parse_logic_expr(inner_pair.into_inner().next().unwrap());

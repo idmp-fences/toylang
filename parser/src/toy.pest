@@ -25,11 +25,13 @@ condatom = {
     condneg
   | condparen
   | condeq
+  | condleq
 }
 
-condneg = { "!" ~ condexpr }
+condneg   = { "!" ~ condexpr }
 condparen = { "(" ~ condexpr ~ ")" }
-condeq = { expr ~ "==" ~ expr }
+condeq    = { expr ~ "==" ~ expr }
+condleq   = { expr ~ "<=" ~ expr }
 
 // '&&' has lowest precedence
 condexpr = { condatom ~ ("&&" ~ condatom)* }
@@ -38,10 +40,12 @@ logicatom  =  {
     logicneg
   | logicparen
   | logiceq
+  | logicleq
 }
-logicneg = { "!" ~ logicexpr }
+logicneg   = { "!" ~ logicexpr }
 logicparen = { "(" ~ logicexpr ~ ")" }
-logiceq = { logicint ~ "==" ~ logicint }
+logiceq    = { logicint ~ "==" ~ logicint }
+logicleq   = { logicint ~ "<=" ~ logicint }
 
 // '&&' has lowest precedence
 logicexpr = { logicatom ~ ("&&" ~ logicatom)* }
