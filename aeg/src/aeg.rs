@@ -65,20 +65,42 @@ pub enum Fence {
     Control,
 }
 
-#[derive(Debug, Clone)]
-pub struct AbstractEventGraph {
-    pub graph: Aeg,
+#[derive(Debug, Clone, Copy)]
+pub struct AegConfig {
+    pub architecture: Architecture,
+    pub skip_branches: bool,
 }
 
-impl From<&Program> for AbstractEventGraph {
-    fn from(program: &Program) -> Self {
-        AbstractEventGraph {
-            graph: create_aeg(program),
+impl Default for AegConfig {
+    fn default() -> Self {
+        Self {
+            architecture: Architecture::Tso,
+            skip_branches: true,
         }
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AbstractEventGraph {
+    pub graph: Aeg,
+    pub config: AegConfig,
+}
+
 impl AbstractEventGraph {
+    pub fn new(program: &Program) -> Self {
+        AbstractEventGraph {
+            graph: create_aeg(program),
+            config: AegConfig::default(),
+        }
+    }
+
+    pub fn with_config(program: &Program, config: AegConfig) -> Self {
+        AbstractEventGraph {
+            graph: create_aeg(program),
+            config,
+        }
+    }
+
     /// Find all neighbors of a node, taking into account transitive po edges
     pub fn neighbors(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
         let po_neighbors = self.transitive_po_neighbors(node);
@@ -151,7 +173,7 @@ impl AbstractEventGraph {
     }
 
     pub fn tso_critical_cycles(&self) -> Vec<CriticalCycle> {
-        critical_cycles::critical_cycles(self, &Architecture::Tso)
+        critical_cycles::critical_cycles(self)
     }
 }
 
@@ -648,7 +670,7 @@ mod tests {
             assert( t1.a == t2.b );
         }"#;
         let program = parser::parse(program).unwrap();
-        let aeg = AbstractEventGraph::from(&program);
+        let aeg = AbstractEventGraph::new(&program);
         dbg!(&aeg);
         let mut nodes = aeg.graph.node_indices();
         let node1 = nodes.next().unwrap();

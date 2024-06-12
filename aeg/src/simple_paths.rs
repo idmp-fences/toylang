@@ -86,9 +86,33 @@ pub fn all_simple_po_paths(
 #[cfg(test)]
 mod test {
 
+    use itertools::Itertools;
+
     use crate::AbstractEventGraph;
 
     use super::all_simple_po_paths;
+
+    #[test]
+    fn cartesian_product() {
+        let paths = vec![
+            vec![vec![0, 5, 1]],
+            vec![vec![2, 6, 3], vec![2, 7, 8, 3]],
+            vec![vec![4, 6], vec![4, 5, 6]],
+        ];
+
+        let p = paths.iter().fold(vec![vec![]], |acc, e| {
+            acc.iter()
+                .cartesian_product(e)
+                .map(|(t1, t2)| {
+                    t1.into_iter()
+                        .chain(t2.into_iter())
+                        .copied()
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        });
+        dbg!(p);
+    }
 
     #[test]
     fn ifs() {
@@ -111,7 +135,7 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = dbg!(AbstractEventGraph::from(&program));
+        let aeg = dbg!(AbstractEventGraph::new(&program));
 
         let first_wx = aeg.graph.node_indices().next().unwrap();
         let last_wx = aeg.graph.node_indices().next_back().unwrap();
@@ -138,7 +162,7 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = dbg!(AbstractEventGraph::from(&program));
+        let aeg = dbg!(AbstractEventGraph::new(&program));
 
         let first_wx = aeg.graph.node_indices().next().unwrap();
         let last_wx = aeg.graph.node_indices().next_back().unwrap();

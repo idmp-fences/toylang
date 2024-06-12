@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use itertools::Itertools;
 use petgraph::{
     graph::NodeIndex,
     prelude::EdgeIndex,
@@ -8,6 +9,7 @@ use petgraph::{
 
 use crate::{
     aeg::{MemoryId, Node, ThreadId},
+    simple_paths::all_simple_po_paths,
     AbstractEventGraph,
 };
 
@@ -189,7 +191,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
     ///
     /// TODO: Really, it should be possible to add this check in the [IncompleteMinimalCycle::add_node] function,
     /// and not have to go through the cycle again. Worth looking into if this becomes a bottleneck.
-    fn complete(self, aeg: &AbstractEventGraph) -> Option<CriticalCycle> {
+    fn complete(self, aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
         if self.has_delay {
             for (_, nodes) in &self.thread_accesses {
                 debug_assert!(nodes.len() <= 2);
@@ -197,7 +199,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
                     let idx1 = nodes[0];
                     let idx2 = nodes[1];
                     if !((idx2 - idx1) == 1 || (idx2 - idx1) == self.cycle.len() - 1) {
-                        return None;
+                        return vec![];
                     }
                 }
             }
@@ -207,7 +209,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
                     let idx1 = nodes[0];
                     let idx2 = nodes[1];
                     if !((idx2 - idx1) == 1 || (idx2 - idx1) == self.cycle.len() - 1) {
-                        return None;
+                        return vec![];
                     }
                 }
                 if nodes.len() == 3 {
@@ -216,30 +218,30 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
                     let idx3 = nodes[2];
 
                     if !((idx2 - idx1) == 1 || (idx2 - idx1) == self.cycle.len() - 1) {
-                        return None;
+                        return vec![];
                     }
                     if !((idx3 - idx2) == 1 || (idx3 - idx2) == self.cycle.len() - 1) {
-                        return None;
+                        return vec![];
                     }
                 }
             }
 
-            let pf = potential_fences(aeg, &self.cycle, &self.architecture);
-            Some(CriticalCycle {
-                cycle: self.cycle,
-                potential_fences: pf,
-            })
+            let pfs = potential_fences(aeg, &self.cycle);
+
+            pfs.into_iter()
+                .map(|pf| CriticalCycle {
+                    cycle: self.cycle.clone(),
+                    potential_fences: pf,
+                })
+                .collect()
         } else {
-            None
+            vec![]
         }
     }
 }
 
 /// Find all critical cycles in an [AbstractEventGraph] for the given architecture
-pub(crate) fn critical_cycles(
-    aeg: &AbstractEventGraph,
-    architecture: &Architecture,
-) -> Vec<CriticalCycle> {
+pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
     // We go through each of the nodes in the abstract event graph, using DFS on each to look for critical cycles
 
     let mut all_cycles = Vec::new();
@@ -257,7 +259,7 @@ pub(crate) fn critical_cycles(
         // Reset the state of the DFS
         stack.clear();
         discovered.clear();
-        let mut mc = IncompleteMinimalCycle::with_architecture(architecture);
+        let mut mc = IncompleteMinimalCycle::with_architecture(&aeg.config.architecture);
         debug_assert!(mc.add_node(aeg, start_node));
         stack.push(mc);
 
@@ -272,9 +274,7 @@ pub(crate) fn critical_cycles(
                         if cycle.add_node(aeg, succ) {
                             stack.push(cycle);
                         } else if *cycle.first().unwrap() == succ && cycle.len() > 2 {
-                            if let Some(cycle) = cycle.complete(aeg) {
-                                inner_cycles.push(cycle);
-                            }
+                            inner_cycles.extend(cycle.complete(aeg));
                         }
                     }
                 }
@@ -297,13 +297,10 @@ pub(crate) fn critical_cycles(
 /// Currently it will just pick any shortest of the branching po paths and return those edges,
 /// which I don't think is correct, as placing a fence on just one of the branches will still
 /// allow critical cycles through the other branch.
-fn potential_fences(
-    aeg: &AbstractEventGraph,
-    cycle: &[NodeIndex],
-    architecture: &Architecture,
-) -> Vec<EdgeIndex> {
+fn potential_fences(aeg: &AbstractEventGraph, cycle: &[NodeIndex]) -> Vec<Vec<EdgeIndex>> {
     let n = cycle.len();
-    let mut potential_fences = vec![];
+    let mut potential_fences_skip = vec![];
+    let mut potential_fences_paths: Vec<Vec<Vec<_>>> = vec![];
     for i in 0..n {
         let j = {
             if i < n - 1 {
@@ -316,32 +313,65 @@ fn potential_fences(
         let u = cycle[i];
         let v = cycle[j];
 
-        if let Some(path) = aeg.po_between(u, v) {
-            // There is a po(+) edge between u and v
-            match (architecture, &aeg.graph[u], &aeg.graph[v]) {
-                // Only alow poWR edges on TSO
-                (Architecture::Tso, Node::Write(_, _), Node::Read(_, _)) => {}
-                (Architecture::Tso, _, _) => continue,
-                (Architecture::Arm, _, _) => unimplemented!(),
-                // Allow everything on Power
-                (Architecture::Power, _, _) => {}
-            }
+        // Check the node types between u and v
+        match (aeg.config.architecture, &aeg.graph[u], &aeg.graph[v]) {
+            // Only alow (po)WR edges on TSO
+            (Architecture::Tso, Node::Write(_, _), Node::Read(_, _)) => {}
+            (Architecture::Tso, _, _) => continue,
+            (Architecture::Arm, _, _) => unimplemented!(),
+            // Allow everything on Power
+            (Architecture::Power, _, _) => {}
+        }
 
-            potential_fences.extend(
-                path.windows(2)
-                    .map(|pair| aeg.graph.find_edge(pair[0], pair[1]).unwrap()),
-            )
+        if aeg.config.skip_branches {
+            if let Some(path) = aeg.po_between(u, v) {
+                potential_fences_skip.extend(
+                    path.windows(2)
+                        .map(|pair| aeg.graph.find_edge(pair[0], pair[1]).unwrap()),
+                )
+            }
+        } else {
+            let paths: Vec<Vec<_>> = all_simple_po_paths(aeg, u, v, 0, None)
+                .map(|path| {
+                    path.windows(2)
+                        .map(|pair| aeg.graph.find_edge(pair[0], pair[1]).unwrap())
+                        .collect()
+                })
+                .collect();
+            if paths.len() > 0 {
+                potential_fences_paths.push(paths);
+            }
         }
     }
-    potential_fences
+
+    if aeg.config.skip_branches {
+        vec![potential_fences_skip]
+    } else {
+        // Each item in potential fences paths contains a list of paths
+        // from two nodes in the cycle, hence potential fences paths is
+        // a triply nested loop. Here we reduce the loop into all the
+        // potential paths that result from it by taking the cartesian product
+        potential_fences_paths.iter().fold(vec![vec![]], |acc, e| {
+            acc.iter()
+                .cartesian_product(e)
+                .map(|(t1, t2)| {
+                    t1.into_iter()
+                        .chain(t2.into_iter())
+                        .copied()
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        })
+    }
 }
 
 #[cfg(test)]
 mod test {
     use petgraph::dot::Dot;
 
+    use super::Architecture::*;
     use super::*;
-    use crate::aeg::{AbstractEventGraph, Aeg, AegEdge};
+    use crate::aeg::{AbstractEventGraph, Aeg, AegConfig, AegEdge};
 
     #[test]
     #[allow(non_snake_case)]
@@ -363,7 +393,10 @@ mod test {
         g.update_edge(Ry, Wy, AegEdge::Competing);
         g.update_edge(Wy, Ry, AegEdge::Competing);
 
-        let aeg = AbstractEventGraph { graph: g };
+        let aeg = AbstractEventGraph {
+            graph: g,
+            config: Default::default(),
+        };
 
         let mut mc = IncompleteMinimalCycle::new_tso();
         assert!(mc.add_node(&aeg, Wy));
@@ -394,7 +427,10 @@ mod test {
         g.update_edge(Ry, Wy, AegEdge::Competing);
         g.update_edge(Wy, Ry, AegEdge::Competing);
 
-        let aeg = AbstractEventGraph { graph: g };
+        let aeg = AbstractEventGraph {
+            graph: g,
+            config: Default::default(),
+        };
 
         let mut mc = IncompleteMinimalCycle::new_tso();
         assert!(mc.add_node(&aeg, Wy));
@@ -422,13 +458,47 @@ mod test {
             assert( !(t1.a == 0 && t1.b == 0) );
         }"#;
         let ast = parser::parse(program).unwrap();
-        let aeg = AbstractEventGraph::from(&ast);
+        let mut aeg = AbstractEventGraph::new(&ast);
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
 
-        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        // TSO
+        let ccs = critical_cycles(&aeg);
         assert_eq!(ccs.len(), 1);
 
-        let ccs = critical_cycles(&aeg, &Architecture::Tso);
+        // Power
+        aeg.config.architecture = Power;
+        let ccs = critical_cycles(&aeg);
+        assert_eq!(ccs.len(), 1);
+    }
+
+    #[test]
+    fn simple_critical_cycle_skip() {
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        thread t1 {
+            x = 1;
+            let a: u32 = y;
+        }
+        thread t2 {
+            y = 1;
+            let b: u32 = x;
+        }
+        final {
+            // the following is possible under tso
+            assert( !(t1.a == 0 && t1.b == 0) );
+        }"#;
+        let ast = parser::parse(program).unwrap();
+        let mut aeg = AbstractEventGraph::with_config(
+            &ast,
+            AegConfig {
+                architecture: Architecture::Power,
+                skip_branches: false,
+            },
+        );
+        println!("{:?}", Dot::with_config(&aeg.graph, &[]));
+
+        let ccs = critical_cycles(&aeg);
         assert_eq!(ccs.len(), 1);
     }
 
@@ -466,10 +536,17 @@ mod test {
         }
         "#;
         let ast = parser::parse(program).unwrap();
-        let aeg = AbstractEventGraph::from(&ast);
+        let mut aeg = AbstractEventGraph::with_config(
+            &ast,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
 
-        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        // Power
+        let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
 
         // There are actually 5 critical cycles, 1 more than the 4 suggested in the fig 16
@@ -477,7 +554,9 @@ mod test {
         // Wt(t1) -po-> Wy(t1) -cmp-> Wy(t4) -cmp-> Ry(t3) -po-> Rt(t3) -cmp-> Wt(t1)
         assert_eq!(ccs.len(), 5);
 
-        let ccs = critical_cycles(&aeg, &Architecture::Tso);
+        // TSO
+        aeg.config.architecture = Architecture::Tso;
+        let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
         assert_eq!(ccs.len(), 1);
         assert_eq!(ccs[0].potential_fences.len(), 2)
@@ -503,9 +582,15 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = AbstractEventGraph::from(&program);
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
-        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
         assert_eq!(ccs.len(), 2)
     }
@@ -537,9 +622,15 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = AbstractEventGraph::from(&program);
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
-        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
         assert_eq!(ccs.len(), 2);
 
@@ -552,6 +643,122 @@ mod test {
                 assert_eq!(cc.potential_fences.len(), 3);
             }
         }
+    }
+
+    #[test]
+    fn nested_ifs() {
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        let z: u32 = 0;
+        thread t1 {
+            let a: u32 = 0;
+            x = 42;
+            if (1 == 1) {
+                if (1 == 1 ) {
+                    z = 1;
+                } else {
+                    z = 2;
+                }
+            } else {
+                if (1 == 1) {
+                    z = 3;
+                } else {
+                    z = 4; 
+                }
+            }
+            y = 1;
+        }
+        thread t2 {
+            let b: u32 = y;
+            let d: u32 = x;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
+        println!("{:?}", Dot::with_config(&aeg.graph, &[]));
+        let ccs = critical_cycles(&aeg);
+        dbg!(&ccs);
+        assert_eq!(ccs.len(), 1);
+
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: false,
+            },
+        );
+        let ccs = critical_cycles(&aeg);
+        dbg!(&ccs);
+        // 4 branches + 1 skip connection
+        assert_eq!(ccs.len(), 5);
+    }
+
+    #[test]
+    fn cc_through_nested_ifs() {
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        let z: u32 = 0;
+        thread t1 {
+            let a: u32 = 0;
+            if (1 == 1) {
+                x = 42;
+                if (1 == 1 ) {
+                    z = 1;
+                } else {
+                    z = 2;
+                }
+            } else {
+                if (1 == 1) {
+                    z = 3;
+                } else {
+                    z = 4; 
+                }
+            }
+            y = 1;
+        }
+        thread t2 {
+            let b: u32 = y;
+            let d: u32 = x;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
+        println!("{:?}", Dot::with_config(&aeg.graph, &[]));
+        let ccs = critical_cycles(&aeg);
+        dbg!(&ccs);
+        assert_eq!(ccs.len(), 1);
+
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: false,
+            },
+        );
+        let ccs = critical_cycles(&aeg);
+        dbg!(&ccs);
+        // 2 branches + 1 skip connection
+        assert_eq!(ccs.len(), 3);
     }
 
     #[test]
@@ -576,31 +783,50 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = AbstractEventGraph::from(&program);
+        let mut aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
 
         dbg!(Dot::new(&aeg.graph));
 
-        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        let ccs = critical_cycles(&aeg);
         assert_eq!(ccs.len(), 1);
         dbg!(&ccs);
 
         let actual = CriticalCycle {
             cycle: vec![
                 NodeIndex::from(1),
-                NodeIndex::from(3),
                 NodeIndex::from(4),
                 NodeIndex::from(5),
+                NodeIndex::from(6),
             ],
             potential_fences: vec![
                 EdgeIndex::from(1),
                 EdgeIndex::from(2),
-                EdgeIndex::from(3),
-                EdgeIndex::from(4),
+                EdgeIndex::from(5),
+                EdgeIndex::from(6),
             ],
         };
 
         assert_eq!(ccs[0].cycle, actual.cycle);
         assert_eq!(ccs[0].potential_fences, actual.potential_fences);
+
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: false,
+            },
+        );
+
+        // since we're already in the while loop, there are no extra cc's
+        let ccs = critical_cycles(&aeg);
+        assert_eq!(ccs.len(), 1);
+        dbg!(&ccs);
     }
 
     #[test]
@@ -625,26 +851,65 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = AbstractEventGraph::from(&program);
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
 
         dbg!(Dot::new(&aeg.graph));
 
-        let ccs = critical_cycles(&aeg, &Architecture::Power);
-        assert_eq!(ccs.len(), 1);
+        let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
+        assert_eq!(ccs.len(), 1);
 
         let actual = CriticalCycle {
             cycle: vec![
                 NodeIndex::from(0),
-                NodeIndex::from(3),
                 NodeIndex::from(4),
                 NodeIndex::from(5),
+                NodeIndex::from(6),
             ],
-            potential_fences: vec![EdgeIndex::from(0), EdgeIndex::from(3), EdgeIndex::from(4)],
+            potential_fences: vec![EdgeIndex::from(0), EdgeIndex::from(4), EdgeIndex::from(6)],
         };
 
         assert_eq!(ccs[0].cycle, actual.cycle);
         assert_eq!(ccs[0].potential_fences, actual.potential_fences);
+
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: false,
+            },
+        );
+
+        let ccs = critical_cycles(&aeg);
+        dbg!(&ccs);
+
+        // two ways of going through the while
+        assert_eq!(ccs.len(), 2);
+
+        let actual = CriticalCycle {
+            cycle: vec![
+                NodeIndex::from(0),
+                NodeIndex::from(4),
+                NodeIndex::from(5),
+                NodeIndex::from(6),
+            ],
+            potential_fences: vec![
+                EdgeIndex::from(0),
+                EdgeIndex::from(1),
+                EdgeIndex::from(2),
+                EdgeIndex::from(5),
+                EdgeIndex::from(6),
+            ],
+        };
+
+        assert_eq!(ccs[1].cycle, actual.cycle);
+        assert_eq!(ccs[1].potential_fences, actual.potential_fences);
     }
 
     #[test]
@@ -653,9 +918,15 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = AbstractEventGraph::from(&program);
+        let mut aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
 
-        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
     }
 
@@ -680,11 +951,17 @@ mod test {
             // the following is possible under tso
             assert( !(t1.a == 0 && t1.b == 0) );
         }"#;
-        let ast = parser::parse(program).unwrap();
-        let aeg = AbstractEventGraph::from(&ast);
+        let program = parser::parse(program).unwrap();
+        let mut aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
 
-        let ccs = critical_cycles(&aeg, &Architecture::Power);
+        let ccs = critical_cycles(&aeg);
         assert_eq!(ccs.len(), 0);
     }
 }
