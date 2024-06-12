@@ -9,7 +9,7 @@ use petgraph::visit::GraphBase;
 /// Returns an iterator that produces all simple paths from `from` node to `to` through program order edges, which contains at least `min_intermediate_nodes` nodes
 /// and at most `max_intermediate_nodes`, if given, or limited by the (po sub)graph's order otherwise. The simple path is a path without repetitions.
 ///
-/// This algorithm is adapted from [petgraph::algo::all_simple_paths].
+/// This algorithm is adapted from [`petgraph::algo::all_simple_paths`].
 pub fn all_simple_po_paths(
     aeg: &AbstractEventGraph,
     from: <Aeg as GraphBase>::NodeId,

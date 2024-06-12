@@ -1,11 +1,7 @@
 use std::collections::HashMap;
 
 use itertools::Itertools;
-use petgraph::{
-    graph::NodeIndex,
-    prelude::EdgeIndex,
-    visit::{VisitMap, Visitable},
-};
+use petgraph::{graph::NodeIndex, prelude::EdgeIndex};
 
 use crate::{
     aeg::{MemoryId, Node, ThreadId},
@@ -62,17 +58,13 @@ impl PartialEq for IncompleteMinimalCycle<ThreadId, MemoryId> {
 impl Eq for IncompleteMinimalCycle<ThreadId, MemoryId> {}
 
 impl IncompleteMinimalCycle<ThreadId, MemoryId> {
-    fn new_tso() -> Self {
-        Self::with_architecture(&Architecture::Tso)
-    }
-
-    fn with_architecture(architecture: &Architecture) -> Self {
+    fn with_architecture(architecture: Architecture) -> Self {
         IncompleteMinimalCycle {
             cycle: Vec::new(),
             thread_accesses: HashMap::new(),
             memory_accesses: HashMap::new(),
             has_delay: false,
-            architecture: *architecture,
+            architecture: architecture,
         }
     }
 
@@ -105,8 +97,8 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
             }
         };
 
-        let thread_accesses = self.thread_accesses.entry(thread.clone()).or_insert(vec![]);
-        let memory_accesses = self.memory_accesses.entry(addr.clone()).or_insert(vec![]);
+        let thread_accesses = self.thread_accesses.entry(thread.clone()).or_default();
+        let memory_accesses = self.memory_accesses.entry(addr.clone()).or_default();
 
         // MC1: Per thread, there are at most two accesses,
         // and the accesses are adjacent in the cycle
@@ -193,7 +185,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
     /// and not have to go through the cycle again. Worth looking into if this becomes a bottleneck.
     fn complete(self, aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
         if self.has_delay {
-            for (_, nodes) in &self.thread_accesses {
+            for nodes in self.thread_accesses.values() {
                 debug_assert!(nodes.len() <= 2);
                 if nodes.len() == 2 {
                     let idx1 = nodes[0];
@@ -203,7 +195,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
                     }
                 }
             }
-            for (_, nodes) in &self.memory_accesses {
+            for nodes in self.memory_accesses.values() {
                 debug_assert!(nodes.len() <= 3);
                 if nodes.len() == 2 {
                     let idx1 = nodes[0];
@@ -259,7 +251,7 @@ pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
         // Reset the state of the DFS
         stack.clear();
         discovered.clear();
-        let mut mc = IncompleteMinimalCycle::with_architecture(&aeg.config.architecture);
+        let mut mc = IncompleteMinimalCycle::with_architecture(aeg.config.architecture);
         debug_assert!(mc.add_node(aeg, start_node));
         stack.push(mc);
 
@@ -328,7 +320,7 @@ fn potential_fences(aeg: &AbstractEventGraph, cycle: &[NodeIndex]) -> Vec<Vec<Ed
                 potential_fences_skip.extend(
                     path.windows(2)
                         .map(|pair| aeg.graph.find_edge(pair[0], pair[1]).unwrap()),
-                )
+                );
             }
         } else {
             let paths: Vec<Vec<_>> = all_simple_po_paths(aeg, u, v, 0, None)
@@ -338,7 +330,7 @@ fn potential_fences(aeg: &AbstractEventGraph, cycle: &[NodeIndex]) -> Vec<Vec<Ed
                         .collect()
                 })
                 .collect();
-            if paths.len() > 0 {
+            if !paths.is_empty() {
                 potential_fences_paths.push(paths);
             }
         }
@@ -373,12 +365,7 @@ fn potential_fences(aeg: &AbstractEventGraph, cycle: &[NodeIndex]) -> Vec<Vec<Ed
         potential_fences_paths.iter().fold(vec![vec![]], |acc, e| {
             acc.iter()
                 .cartesian_product(e)
-                .map(|(t1, t2)| {
-                    t1.into_iter()
-                        .chain(t2.into_iter())
-                        .copied()
-                        .collect::<Vec<_>>()
-                })
+                .map(|(t1, t2)| t1.iter().chain(t2).copied().collect::<Vec<_>>())
                 .collect()
         })
     }
@@ -417,7 +404,7 @@ mod test {
             config: Default::default(),
         };
 
-        let mut mc = IncompleteMinimalCycle::new_tso();
+        let mut mc = IncompleteMinimalCycle::with_architecture(Architecture::Tso);
         assert!(mc.add_node(&aeg, Wy));
         assert!(mc.add_node(&aeg, Rx));
 
@@ -451,7 +438,7 @@ mod test {
             config: Default::default(),
         };
 
-        let mut mc = IncompleteMinimalCycle::new_tso();
+        let mut mc = IncompleteMinimalCycle::with_architecture(Architecture::Tso);
         assert!(mc.add_node(&aeg, Wy));
         assert!(mc.add_node(&aeg, Rx));
 
@@ -508,7 +495,7 @@ mod test {
             assert( !(t1.a == 0 && t1.b == 0) );
         }"#;
         let ast = parser::parse(program).unwrap();
-        let mut aeg = AbstractEventGraph::with_config(
+        let aeg = AbstractEventGraph::with_config(
             &ast,
             AegConfig {
                 architecture: Architecture::Power,
@@ -802,7 +789,7 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let mut aeg = AbstractEventGraph::with_config(
+        let aeg = AbstractEventGraph::with_config(
             &program,
             AegConfig {
                 architecture: Power,
@@ -937,7 +924,7 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let mut aeg = AbstractEventGraph::with_config(
+        let aeg = AbstractEventGraph::with_config(
             &program,
             AegConfig {
                 architecture: Power,
@@ -971,7 +958,7 @@ mod test {
             assert( !(t1.a == 0 && t1.b == 0) );
         }"#;
         let program = parser::parse(program).unwrap();
-        let mut aeg = AbstractEventGraph::with_config(
+        let aeg = AbstractEventGraph::with_config(
             &program,
             AegConfig {
                 architecture: Power,
