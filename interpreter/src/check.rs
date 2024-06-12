@@ -104,6 +104,7 @@ fn check_cond_expr(cond_expr: &CondExpr, globals: &HashSet<String>, locals: &Has
         CondExpr::Neg(e) => check_cond_expr(e, globals, locals),
         CondExpr::And(e1, e2) => check_cond_expr(e1, globals, locals).and(check_cond_expr(e2, globals, locals)),
         CondExpr::Eq(e1, e2) => check_expression(e1, globals, locals).and(check_expression(e2, globals, locals)),
+        CondExpr::Leq(e1, e2) => check_expression(e1, globals, locals).and(check_expression(e2, globals, locals)),  
     }
 }
 
@@ -116,6 +117,7 @@ fn check_logic_expr(logic_expr: &LogicExpr, locals: &HashMap<String, HashSet<Str
         LogicExpr::Neg(e) => check_logic_expr(e, locals),
         LogicExpr::And(e1, e2) => check_logic_expr(e1, locals).and(check_logic_expr(e2, locals)),
         LogicExpr::Eq(e1, e2) => check_logic_int(e1, locals).and(check_logic_int(e2, locals)),
+        LogicExpr::Leq(e1, e2) => check_logic_int(e1, locals).and(check_logic_int(e2, locals)),
     }
 }
 

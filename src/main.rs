@@ -8,9 +8,9 @@ use std::path::PathBuf;
 #[clap(rename_all = "kebab-case")]
 enum ArgMemoryModel {
     // Sequential consistency
-    #[default]
     Sc,
     // Total store order
+    #[default]
     Tso,
 }
 

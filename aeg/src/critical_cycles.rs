@@ -803,12 +803,14 @@ mod test {
                 NodeIndex::from(4),
                 NodeIndex::from(5),
                 NodeIndex::from(6),
+
             ],
             potential_fences: vec![
                 EdgeIndex::from(1),
                 EdgeIndex::from(2),
                 EdgeIndex::from(5),
                 EdgeIndex::from(6),
+
             ],
         };
 
