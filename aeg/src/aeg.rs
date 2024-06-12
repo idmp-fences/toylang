@@ -172,7 +172,7 @@ impl AbstractEventGraph {
         .map(|(_cost, path)| path)
     }
 
-    pub fn tso_critical_cycles(&self) -> Vec<CriticalCycle> {
+    pub fn find_critical_cycles(&self) -> Vec<CriticalCycle> {
         critical_cycles::critical_cycles(self)
     }
 }

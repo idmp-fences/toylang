@@ -351,6 +351,25 @@ fn potential_fences(aeg: &AbstractEventGraph, cycle: &[NodeIndex]) -> Vec<Vec<Ed
         // from two nodes in the cycle, hence potential fences paths is
         // a triply nested loop. Here we reduce the loop into all the
         // potential paths that result from it by taking the cartesian product
+
+        // As an example:
+        //
+        // [
+        //   [
+        //     [a, z ,b]
+        //   ],
+        //   [
+        //     [y, c],
+        //     [x, c]
+        //   ]
+        // ]
+        //
+        // turns into
+        //
+        // [
+        //   [a, z, b, y, c],
+        //   [a, z, b, x, c]
+        // ]
         potential_fences_paths.iter().fold(vec![vec![]], |acc, e| {
             acc.iter()
                 .cartesian_product(e)
@@ -803,14 +822,12 @@ mod test {
                 NodeIndex::from(4),
                 NodeIndex::from(5),
                 NodeIndex::from(6),
-
             ],
             potential_fences: vec![
                 EdgeIndex::from(1),
                 EdgeIndex::from(2),
                 EdgeIndex::from(5),
                 EdgeIndex::from(6),
-
             ],
         };
 
