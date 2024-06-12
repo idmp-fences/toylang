@@ -1,13 +1,17 @@
 import sys
 import json
+import time
+import csv
+import math
 from ilp import ILPSolver, AbstractEventGraph, CriticalCycle
 from alns_test import *
 
 def alns_experiment(filename):
+    start_time = time.time()
+
     def initial_state(aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]) -> ProblemState:
         solver = ILPSolver(aeg, critical_cycles)
         solver.fence_placement(0.5)  # Run the ILP solver to place initial fences
-
         return ProblemState(ProblemInstance(aeg, critical_cycles))
 
     with open(filename, 'r') as file:
@@ -37,47 +41,110 @@ def alns_experiment(filename):
 
     # Retrieve the final solution
     best = result.best_state
-    print(f"Best heuristic solution objective is {best.objective()}.")
+    best_objective = best.objective()
+    print(f"Best heuristic solution objective is {best_objective}.")
     print("AEG:", aeg)
     print("Alns Experiment")
 
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"ALNS experiment took {elapsed_time:.2f} seconds.")
+
+    return elapsed_time, best_objective
+
 def ilp_experiment(filename):
+    start_time = time.time()
+
     with open(filename, 'r') as file:
         data = json.load(file)
     aeg_data = data["aeg"]
     ccs_data = data["critical_cycles"]
     aeg = AbstractEventGraph(aeg_data['nodes'], aeg_data['edges'])
     critical_cycles = [CriticalCycle(cc['cycle'], cc['potential_fences'], aeg) for cc in ccs_data]
-    print(ILPSolver(aeg, critical_cycles).fence_placement())
+    fences = ILPSolver(aeg, critical_cycles).fence_placement()
     print("ILP experiment")
 
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"ILP experiment took {elapsed_time:.2f} seconds.")
+
+    return elapsed_time, fences
+
+def append_to_csv(csv_filename, mode, experiment_time, extra_data=None):
+    inputfile = sys.argv[2]
+    rows = []
+
+    # Read the existing rows
+    with open(csv_filename, mode='r', newline='') as csvfile:
+        csv_reader = csv.reader(csvfile)
+        rows = list(csv_reader)
+
+    # Update the appropriate row
+    print(inputfile)
+    for row in rows:
+        print(row[0])
+        if row[0] == inputfile and row[1].upper() == mode:
+            row[3] = f"{experiment_time:.2f}"
+            if extra_data is not None:
+                if len(row) > 4:
+                    row[4] = f"{extra_data:.2f}"
+                else:
+                    row.append(f"{extra_data:.2f}")
+            break
+
+    # Write back the updated rows
+    with open(csv_filename, mode='w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        csv_writer.writerows(rows)
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: python run_functions.py <number> <filename>")
+    if len(sys.argv) < 4:
+        print("Usage: python run_functions.py <mode> <inputfile> <filename> <csv_output>")
+        print("<mode> can be '1' for ILP, '2' for ALNS, or 'BOTH'")
         sys.exit(1)
 
     try:
-        arg = int(sys.argv[1])  # Convert the first argument to an integer
-    except ValueError:
-        print("Please provide a valid integer.")
-        sys.exit(1)
-
-    try:
-        filename = str(sys.argv[2])  # Convert the first argument to an integer
+        mode = str(sys.argv[1]).upper()  # Convert the first argument to a string and make it uppercase
     except ValueError:
         print("Please provide a valid string.")
         sys.exit(1)
 
+    try:
+        inputfile = str(sys.argv[2])  # Convert the second argument to a string
+    except ValueError:
+        print("Please provide a valid inputfile.")
+        sys.exit(1)
 
-    # Match the argument to a function
-    if arg == 1:
-        ilp_experiment(filename)
-    elif arg == 2:
-        alns_experiment(filename)
+    try:
+        filename = str(sys.argv[3])  # Convert the second argument to a string
+    except ValueError:
+        print("Please provide a valid filename.")
+        sys.exit(1)
+
+    try:
+        csv_output = str(sys.argv[4])  # Convert the third argument to a string
+    except ValueError:
+        print("Please provide a valid CSV output filename.")
+        sys.exit(1)
+
+    # Run the appropriate experiment(s) based on the mode
+    if mode == "1":
+        elapsed_time, fences = ilp_experiment(filename)
+        ln_fences = len(fences)
+        append_to_csv(csv_output, "ILP", elapsed_time, ln_fences)
+    elif mode == "2":
+        elapsed_time, best_objective = alns_experiment(filename)
+        append_to_csv(csv_output, "ALNS", elapsed_time, best_objective)
+    elif mode == "BOTH":
+        elapsed_time, fences = ilp_experiment(filename)
+        ln_fences = math.log(fences)
+        append_to_csv(csv_output, "ILP", elapsed_time, ln_fences)
+        elapsed_time, best_objective = alns_experiment(filename)
+        append_to_csv(csv_output, "ALNS", elapsed_time, best_objective)
     else:
-        print(f"No function associated with the number: {arg}")
+        print(f"Invalid mode: {mode}")
+        print("Please choose '1', '2', or 'BOTH'")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
-
