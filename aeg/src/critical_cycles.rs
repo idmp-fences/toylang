@@ -252,7 +252,8 @@ pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
         stack.clear();
         discovered.clear();
         let mut mc = IncompleteMinimalCycle::with_architecture(aeg.config.architecture);
-        debug_assert!(mc.add_node(aeg, start_node));
+        let was_added = mc.add_node(aeg, start_node);
+        debug_assert!(was_added);
         stack.push(mc);
 
         while let Some(cycle) = stack.pop() {
