@@ -13,7 +13,7 @@ MODE=$2
 OUTPUT_FILE="cycles.json"
 
 # Run the cargo command with the given filename and save the output
-cargo run -p toy find-cycles "$FILENAME" > "$OUTPUT_FILE"
+cargo run --release -p toy find-cycles "$FILENAME" > "$OUTPUT_FILE"
 
 # Check the mode and run corresponding command
 case "$MODE" in
