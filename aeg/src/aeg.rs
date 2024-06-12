@@ -1,7 +1,8 @@
+use std::iter::from_fn;
+
 use petgraph::{
-    adj::EdgeIndex,
     algo::astar,
-    graph::{DiGraph, Edge, NodeIndex},
+    graph::{DiGraph, NodeIndex},
     visit::{EdgeRef, VisitMap, Visitable},
 };
 
@@ -63,72 +64,92 @@ pub enum Fence {
     Control,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct AegConfig {
+    pub architecture: Architecture,
+    pub skip_branches: bool,
+}
+
+impl Default for AegConfig {
+    fn default() -> Self {
+        Self {
+            architecture: Architecture::Tso,
+            skip_branches: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AbstractEventGraph {
     pub graph: Aeg,
-}
-
-impl From<&Program> for AbstractEventGraph {
-    fn from(program: &Program) -> Self {
-        AbstractEventGraph {
-            graph: create_aeg(program),
-        }
-    }
+    pub config: AegConfig,
 }
 
 impl AbstractEventGraph {
-    /// Find all neighbors of a node, taking into account transitive po edges
-    pub fn neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
-        let mut po_neighbors = self.transitive_po_neighbors(node);
-        let mut close_non_po_neighbors: Vec<NodeIndex> = self
-            .graph
-            .edges(node)
-            .filter_map(|edge| match edge.weight() {
-                AegEdge::ProgramOrder => None,
-                AegEdge::Competing => Some(edge.target()),
-            })
-            .collect();
-
-        close_non_po_neighbors.append(&mut po_neighbors);
-        close_non_po_neighbors
+    pub fn new(program: &Program) -> Self {
+        AbstractEventGraph {
+            graph: create_aeg(program),
+            config: AegConfig::default(),
+        }
     }
 
-    /// Find all the po neighbors of a node connected through (transitive) po edges
-    fn transitive_po_neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
-        let close_po_neighbors = |node| {
+    pub fn with_config(program: &Program, config: AegConfig) -> Self {
+        AbstractEventGraph {
+            graph: create_aeg(program),
+            config,
+        }
+    }
+
+    /// Find all neighbors of a node, taking into account transitive po edges
+    pub fn neighbors(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        let po_neighbors = self.transitive_po_neighbors(node);
+        let close_non_po_neighbors =
             self.graph
                 .edges(node)
                 .filter_map(|edge| match edge.weight() {
-                    AegEdge::ProgramOrder => Some(edge.target()),
-                    AegEdge::Competing => None,
-                })
-        };
+                    AegEdge::ProgramOrder => None,
+                    AegEdge::Competing => Some(edge.target()),
+                });
 
+        close_non_po_neighbors.chain(po_neighbors)
+    }
+
+    /// Find all the neighbours connected by a po edge, not including transitive po edges
+    pub fn close_po_neighbors(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        self.graph
+            .edges(node)
+            .filter_map(|edge| match edge.weight() {
+                AegEdge::ProgramOrder => Some(edge.target()),
+                AegEdge::Competing => None,
+            })
+    }
+
+    /// Find all the po neighbors of a node connected through (transitive) po edges
+    fn transitive_po_neighbors(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
         // Use DFS as backward jump can create PO loops
-        let mut stack = vec![node];
+        let mut stack: Vec<NodeIndex> = self.close_po_neighbors(node).collect();
         let mut discovered = self.graph.visit_map();
 
-        while let Some(curr) = stack.pop() {
-            if discovered.visit(curr) {
-                for succ in close_po_neighbors(curr) {
-                    if !discovered.is_visited(&succ) {
-                        stack.push(succ);
+        from_fn(move || {
+            while let Some(curr) = stack.pop() {
+                if discovered.visit(curr) {
+                    for succ in self.close_po_neighbors(curr) {
+                        if !discovered.is_visited(&succ) {
+                            stack.push(succ);
+                        }
                     }
+                    return Some(curr);
                 }
             }
-        }
-
-        discovered
-            .ones()
-            .map(|one| NodeIndex::from(one as u32))
-            .filter(|n| *n != node)
-            .collect()
+            None
+        })
     }
 
     /// Check if two nodes are connected through po+,
     /// i.e. there is a path of [AegEdge::ProgramOrder] connecting them
     pub fn is_po_connected(&self, a: NodeIndex, b: NodeIndex) -> bool {
-        self.transitive_po_neighbors(a).contains(&b)
+        self.transitive_po_neighbors(a)
+            .any(|neighbor| neighbor == b)
     }
 
     /// Returns the shortest program order path between two nodes, if it exists
@@ -150,8 +171,8 @@ impl AbstractEventGraph {
         .map(|(_cost, path)| path)
     }
 
-    pub fn tso_critical_cycles(&self) -> Vec<CriticalCycle> {
-        critical_cycles::critical_cycles(self, &Architecture::Tso)
+    pub fn find_critical_cycles(&self) -> Vec<CriticalCycle> {
+        critical_cycles::critical_cycles(self)
     }
 }
 
@@ -376,7 +397,7 @@ fn handle_statement(
             // Add a po edge from the last node to the first read
             let mut first_cond = None;
             if let Some(read) = reads.first() {
-                first_cond = Some(vec![*read]);
+                first_cond = Some(*read);
                 connect_previous(graph, last_node, *read);
             }
             if let Some(read) = reads.last() {
@@ -406,19 +427,42 @@ fn handle_statement(
             }
 
             // Condition contains a read
-            if let Some(f) = first_cond {
-                // Add edges from the last node to the first
-                for node in f.iter() {
-                    connect_previous(graph, last_node, *node);
-                }
+            if let Some(f_cond) = first_cond {
+                if let Some(f_body) = first_body {
+                    // Condition duplication
 
-                // Next node should connect to the end of the condition
-                *last_node = branch;
-                Some(f)
+                    // duplicate the condition node (run handle_condition again?)
+                    let mut reads = vec![];
+                    handle_condition(graph, &mut reads, cond, globals, thread.clone());
+
+                    // add edges from the last node of the body to condition
+                    if let Some(read) = reads.first() {
+                        connect_previous(graph, last_node, *read);
+                    }
+
+                    // add backjump edges from the last condition to the first of the body
+                    let last_read = reads.last().unwrap();
+                    for node in f_body.iter() {
+                        connect_previous(graph, &[*last_read], *node);
+                    }
+
+                    // The next node should connect to both conditions
+                    *last_node = branch;
+                    last_node.push(*last_read);
+
+                    Some(vec![f_cond])
+                } else {
+                    // Add backjump edges from the last node to the first
+                    connect_previous(graph, last_node, f_cond);
+
+                    // Next node should connect to the end of the condition
+
+                    Some(vec![f_cond])
+                }
             }
             // Body contains a read or write operation
             else if let Some(f) = first_body {
-                // Add edges from the last node of the body to the start of the body
+                // Add backjump edges from the last node of the body to the start of the body
                 for node in f.iter() {
                     connect_previous(graph, last_node, *node);
                 }
@@ -437,8 +481,10 @@ fn handle_statement(
 
 /// Connect each node in `last_node` to `current_node` with a directed PO edge
 fn connect_previous(graph: &mut Aeg, last_node: &[NodeIndex], current_node: NodeIndex) {
-    for node in last_node {
-        graph.update_edge(*node, current_node, AegEdge::ProgramOrder);
+    for &node in last_node {
+        if node != current_node {
+            graph.update_edge(node, current_node, AegEdge::ProgramOrder);
+        }
     }
 }
 
@@ -485,58 +531,6 @@ fn handle_expression(
             }
         }
     }
-}
-
-/// Returns the potential critical cycles for the following aeg:
-///
-/// ```text
-/// Wy --\   /-- Wx
-/// |     \ /    |
-/// |      x     |
-/// v     / \    v
-/// Rx --/   \-- Ry
-/// ```
-///
-/// I *believe* the optimal solution is placing on one of the two directed edges.
-///
-/// Which is the aeg generated by the following program:
-///
-/// ```text
-/// let x: u32 = 0;
-/// let y: u32 = 0;
-/// thread t1 {
-///     x = 1;
-///     let a: u32 = y;
-/// }
-/// thread t2 {
-///     y = 1;
-///     let b: u32 = x;
-/// }
-/// final {
-///     assert( t1.a == t2.b );
-/// }
-/// ```
-#[deprecated(note = "This function is temporary and will be removed")]
-#[allow(non_snake_case)]
-fn dummy_critical_cycles() -> (Aeg, Vec<Vec<NodeIndex>>) {
-    let mut g: Aeg = Aeg::new();
-
-    let Wy = g.add_node(Node::Write("t1".to_string(), "Wy".to_string()));
-    let Rx = g.add_node(Node::Read("t1".to_string(), "Rx".to_string()));
-
-    let Wx = g.add_node(Node::Write("t2".to_string(), "Wx".to_string()));
-    let Ry = g.add_node(Node::Read("t2".to_string(), "Ry".to_string()));
-
-    g.update_edge(Wy, Rx, AegEdge::ProgramOrder);
-    g.update_edge(Wx, Ry, AegEdge::ProgramOrder);
-
-    g.update_edge(Rx, Wx, AegEdge::Competing);
-    g.update_edge(Wx, Rx, AegEdge::Competing);
-
-    g.update_edge(Ry, Wy, AegEdge::Competing);
-    g.update_edge(Wy, Ry, AegEdge::Competing);
-
-    (g, vec![vec![Rx, Wx, Ry, Wy]])
 }
 
 #[cfg(test)]
@@ -623,17 +617,20 @@ mod tests {
             assert( t1.a == t2.b );
         }"#;
         let program = parser::parse(program).unwrap();
-        let aeg = AbstractEventGraph::from(&program);
+        let aeg = AbstractEventGraph::new(&program);
         dbg!(&aeg);
         let mut nodes = aeg.graph.node_indices();
         let node1 = nodes.next().unwrap();
         let node2 = nodes.next().unwrap();
         let node3 = nodes.next().unwrap();
         let node4 = nodes.next().unwrap();
-        assert_eq!(dbg!(aeg.neighbors(node1)).len(), 4);
-        assert_eq!(aeg.neighbors(node2).len(), 3);
-        assert_eq!(aeg.neighbors(node3).len(), 2);
-        assert_eq!(aeg.neighbors(node4).len(), 1);
+        assert_eq!(
+            dbg!(aeg.neighbors(node1).collect::<Vec<NodeIndex>>()).len(),
+            4
+        );
+        assert_eq!(aeg.neighbors(node2).collect::<Vec<NodeIndex>>().len(), 3);
+        assert_eq!(aeg.neighbors(node3).collect::<Vec<NodeIndex>>().len(), 2);
+        assert_eq!(aeg.neighbors(node4).collect::<Vec<NodeIndex>>().len(), 1);
     }
 
     #[test]
@@ -761,6 +758,7 @@ mod tests {
         x = 32;
         while (x == 0) {
             y = 1;
+            y = 2;
         }
         z = 1;
     }
@@ -772,13 +770,13 @@ mod tests {
         let aeg = create_aeg(&program);
         dbg!(Dot::with_config(&aeg, &[]));
 
-        assert_eq!(aeg.node_count(), 4);
+        assert_eq!(aeg.node_count(), 6);
 
         assert_eq!(
             aeg.edge_references()
                 .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
                 .count(),
-            4
+            7
         );
 
         assert_eq!(
@@ -789,13 +787,20 @@ mod tests {
         );
 
         // find the t1 nodes
-        let ([wx, wy, wz], [rx]) = get_nodes(&aeg, "t1", &["x", "y", "z"], &["x"]);
+        let ([wx, wy1, wy2, wz], [rx, rx_added]) =
+            get_nodes(&aeg, "t1", &["x", "y", "y", "z"], &["x", "x"]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx, rx));
-        assert!(aeg.contains_edge(rx, wy));
-        assert!(aeg.contains_edge(wy, rx));
+
+        assert!(aeg.contains_edge(rx, wy1));
         assert!(aeg.contains_edge(rx, wz));
+
+        assert!(aeg.contains_edge(wy1, wy2));
+        assert!(aeg.contains_edge(wy2, rx_added));
+
+        assert!(aeg.contains_edge(rx_added, wy1));
+        assert!(aeg.contains_edge(rx_added, wz));
     }
 
     #[test]
@@ -846,6 +851,138 @@ mod tests {
         assert!(aeg.contains_edge(ry, wy));
         assert!(aeg.contains_edge(wx, wz));
         assert!(aeg.contains_edge(ry, wz));
+    }
+
+    #[test]
+    fn whiles_no_body() {
+        let program = r#"
+        let x: u32 = 0;
+        thread t1 {
+            let a: u32 = 0;
+            x = 0;
+            while (x == 0) {
+                a = 3;
+            }
+            x = 1;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = create_aeg(&program);
+        dbg!(Dot::with_config(&aeg, &[]));
+
+        assert_eq!(aeg.node_count(), 3);
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
+                .count(),
+            2
+        );
+
+        // find the t1 nodes
+        let ([wx1, wx2], [rx]) = get_nodes(&aeg, "t1", &["x", "x"], &["x"]);
+
+        // ensure we have the correct structure
+        assert!(aeg.contains_edge(wx1, rx));
+        assert!(aeg.contains_edge(rx, wx2));
+    }
+
+    #[test]
+    fn whiles_no_body_no_condition() {
+        let program = r#"
+        let x: u32 = 0;
+        thread t1 {
+            let a: u32 = 0;
+            x = 0;
+            while (a == 0) {
+                a = 3;
+            }
+            x = 1;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = create_aeg(&program);
+        dbg!(Dot::with_config(&aeg, &[]));
+
+        assert_eq!(aeg.node_count(), 2);
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
+                .count(),
+            1
+        );
+
+        // find the t1 nodes
+        let ([wx1, wx2], []) = get_nodes(&aeg, "t1", &["x", "x"], &[]);
+
+        // ensure we have the correct structure
+        assert!(aeg.contains_edge(wx1, wx2));
+    }
+
+    #[test]
+    fn while_and_if_with_no_condition() {
+        let program = r#"
+        let x: u32 = 0;
+        let i: u32 = 0;
+        let j: u32 = 0;
+        let z: u32 = 0;
+        thread t1 {
+            let a: u32 = 0;
+            x = 32;
+            while (a == 0) {
+                if (a == 0) {
+                    i = 1;
+                    j = 2;
+                } else {
+                    a = i;
+                    a = j;
+                }
+            }
+            z = 1;
+        }
+        final {}
+        "#;
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = create_aeg(&program);
+        dbg!(Dot::with_config(&aeg, &[]));
+
+        assert_eq!(aeg.node_count(), 6);
+
+        assert_eq!(
+            aeg.edge_references()
+                .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
+                .count(),
+            11
+        );
+
+        // find the t1 nodes
+        let ([before_while, branch_1_1st, branch_1_2nd, after_while], [branch_2_1st, branch_2_2nd]) =
+            get_nodes(&aeg, "t1", &["x", "i", "j", "z"], &["i", "j"]);
+
+        // ensure we have the correct structure
+        assert!(aeg.contains_edge(before_while, after_while)); // skip connection
+        assert!(aeg.contains_edge(before_while, branch_1_1st)); // branching
+        assert!(aeg.contains_edge(before_while, branch_2_1st));
+
+        assert!(aeg.contains_edge(branch_1_1st, branch_1_2nd)); // normal po order within branch
+        assert!(aeg.contains_edge(branch_2_1st, branch_2_2nd));
+
+        assert!(aeg.contains_edge(branch_2_2nd, branch_2_1st)); // backwards jumps to either branch
+        assert!(aeg.contains_edge(branch_2_2nd, branch_1_1st));
+        assert!(aeg.contains_edge(branch_2_2nd, after_while)); // forward jump to outside of while
+
+        assert!(aeg.contains_edge(branch_1_2nd, branch_1_1st));
+        assert!(aeg.contains_edge(branch_1_2nd, branch_2_1st));
+        assert!(aeg.contains_edge(branch_1_2nd, after_while));
     }
 
     fn get_nodes<const N: usize, const M: usize>(

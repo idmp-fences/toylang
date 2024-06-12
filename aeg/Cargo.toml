@@ -9,6 +9,8 @@ edition = "2021"
 ast = { path = "../ast" }
 petgraph = "0.6.5"
 serde = { version = "1.0.203", features = ["derive"], optional = true }
+indexmap = "2.2.6"
+itertools = "*"
 
 [dev-dependencies]
 parser = { path = "../parser" }
