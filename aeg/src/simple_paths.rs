@@ -6,29 +6,10 @@ use crate::{aeg::Aeg, AbstractEventGraph};
 
 use petgraph::visit::GraphBase;
 
-/// Returns an iterator that produces all simple paths from `from` node to `to`, which contains at least `min_intermediate_nodes` nodes
-/// and at most `max_intermediate_nodes`, if given, or limited by the graph's order otherwise. The simple path is a path without repetitions.
+/// Returns an iterator that produces all simple paths from `from` node to `to` through program order edges, which contains at least `min_intermediate_nodes` nodes
+/// and at most `max_intermediate_nodes`, if given, or limited by the (po sub)graph's order otherwise. The simple path is a path without repetitions.
 ///
-/// This algorithm is adapted from <https://networkx.github.io/documentation/stable/reference/algorithms/generated/networkx.algorithms.simple_paths.all_simple_paths.html>.
-///
-/// # Example
-/// ```
-/// use petgraph::{algo, prelude::*};
-///
-/// let mut graph = DiGraph::<&str, i32>::new();
-///
-/// let a = graph.add_node("a");
-/// let b = graph.add_node("b");
-/// let c = graph.add_node("c");
-/// let d = graph.add_node("d");
-///
-/// graph.extend_with_edges(&[(a, b, 1), (b, c, 1), (c, d, 1), (a, b, 1), (b, d, 1)]);
-///
-/// let ways = algo::all_simple_paths::<Vec<_>, _>(&graph, a, d, 0, None)
-///   .collect::<Vec<_>>();
-///
-/// assert_eq!(4, ways.len());
-/// ```
+/// This algorithm is adapted from [petgraph::algo::all_simple_paths].
 pub fn all_simple_po_paths(
     aeg: &AbstractEventGraph,
     from: <Aeg as GraphBase>::NodeId,
