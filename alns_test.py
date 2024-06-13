@@ -104,6 +104,41 @@ def greedy_repair_most_cycles(destroyed: ProblemState, rnd_state: rnd.RandomStat
         destroyed.instance.aeg.fences.append(destroyed.instance.aeg.edges[best_edge])
     return destroyed
 
+def greedy_repair_in_degrees(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    in_degrees = {}
+    edge_cycles = {}
+    id_cycle = 0
+    for cycle in destroyed.instance.critical_cycles:
+        for edge in cycle.edges:
+            if not edge.id in edge_cycles:
+                edge_cycles[edge.id] = set()
+            edge_cycles[edge.id].add(id_cycle)
+        id_cycle += 1
+
+    for edge in destroyed.instance.aeg.edges:
+        if not edge.target in in_degrees:
+            in_degrees[edge.target] = 0
+        in_degrees[edge.target]+=1
+
+    while edge_cycles != {}:
+        best_edge = -1
+        in_degree = 0
+        for edge_id, cycles in edge_cycles.items():
+            source = destroyed.instance.aeg.edges[edge_id].source
+            if in_degrees[source] > in_degree:
+                in_degree = in_degrees[source]
+                best_edge = edge_id
+        if destroyed.instance.aeg.edges[best_edge].id != best_edge:
+            raise Exception("Wrong json format: Edges ids are not in order")
+        removed_cycles = edge_cycles[best_edge].copy()
+        for cycle_id in removed_cycles:
+            for edge in destroyed.instance.critical_cycles[cycle_id].edges:
+                del edge_cycles[edge.id]
+                
+        in_degrees[destroyed.instance.aeg.edges[best_edge].source]-=1    
+        destroyed.instance.aeg.fences.append(destroyed.instance.aeg.edges[best_edge])
+    return destroyed
+
 
 if __name__ == "__main__":
     with open('./cycles.json', 'r') as file:
@@ -121,7 +156,7 @@ if __name__ == "__main__":
     # Create ALNS and add one or more destroy and repair operators
     alns = ALNS(rnd.RandomState(seed=42))
     alns.add_destroy_operator(destroy)
-    alns.add_repair_operator(greedy_repair_most_cycles)
+    alns.add_repair_operator(greedy_repair_in_degrees)
     # alns.add_repair_operator(repair)
 
     # Configure ALNS
