@@ -1,7 +1,7 @@
 import json
 import sys
 from copy import deepcopy
-from typing import List
+from typing import List, Set
 
 from alns import ALNS
 from alns.accept import HillClimbing
@@ -12,7 +12,6 @@ import numpy.random as rnd
 import numpy as np
 
 from ilp import AbstractEventGraph, CriticalCycle, ILPSolver
-
 
 class ProblemInstance:
     def __init__(self, aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]):
@@ -69,14 +68,46 @@ def destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
 
 
 def repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    print(destroyed.instance.aeg)
+    print(destroyed.instance.critical_cycles)
     solver = ILPSolver(destroyed.instance.aeg, destroyed.instance.critical_cycles)
     solver.fence_placement(0.5)  # Run the ILP solver to place initial fences
+    print("----")
+    print(destroyed.instance.aeg)
+    print(destroyed.instance.critical_cycles)
+    return destroyed
 
+def greedy_repair_most_cycles(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    edge_cycles = {}
+    id_cycle = 0
+    for cycle in destroyed.instance.critical_cycles:
+        for edge in cycle.edges:
+            if not edge.id in edge_cycles:
+                edge_cycles[edge.id] = set()
+            edge_cycles[edge.id].add(id_cycle)
+        id_cycle += 1
+
+    while edge_cycles != {}:
+        best_edge = -1
+        cycle_count = 0
+        for edge_id, cycles in edge_cycles.items():
+            if len(cycles) > cycle_count:
+                cycle_count = len(cycles)
+                best_edge = edge_id
+        if destroyed.instance.aeg.edges[best_edge].id != best_edge:
+            raise Exception("Wrong json format: Edges ids are not in order")
+        removed_cycles = edge_cycles[best_edge].copy()
+        for cycle_id in removed_cycles:
+            for edge in destroyed.instance.critical_cycles[cycle_id].edges:
+                del edge_cycles[edge.id]
+            
+        destroyed.instance.aeg.fences.append(destroyed.instance.aeg.edges[best_edge])
     return destroyed
 
 
 if __name__ == "__main__":
-    input_json = json.load(sys.stdin)
+    with open('./cycles.json', 'r') as file:
+        input_json = json.load(file)
     aeg_data = input_json["aeg"]
     ccs_data = input_json["critical_cycles"]
 
@@ -90,7 +121,8 @@ if __name__ == "__main__":
     # Create ALNS and add one or more destroy and repair operators
     alns = ALNS(rnd.RandomState(seed=42))
     alns.add_destroy_operator(destroy)
-    alns.add_repair_operator(repair)
+    alns.add_repair_operator(greedy_repair_most_cycles)
+    # alns.add_repair_operator(repair)
 
     # Configure ALNS
     select = RandomSelect(num_destroy=1, num_repair=1)  # see alns.select for others
