@@ -66,17 +66,40 @@ def destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
 
     return next_state
 
+# destroy heuristic that tries to remove as many fences as possible to revive a single cycle
+def destroy_fences_same_cycle(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    # Copy the current state to avoid modifying the original state
+    next_state = current.copy()
+    edge_cycles_cnt = {}
+    fence_edges = set()
+    for edge in next_state.instance.aeg.fences:
+        fence_edges.add(edge.id)
+    cycle_id = 0
+    for cycle in next_state.instance.critical_cycles:
+        for edge in cycle.edges:
+            if not cycle_id in edge_cycles_cnt:
+                edge_cycles_cnt[cycle_id] = set()
+            if edge.id in fence_edges:
+                edge_cycles_cnt[cycle_id].add(edge.id)
+        cycle_id+=1
+
+    max_edges = 0
+    revived_cycle = -1
+    for cycle_id, edges in edge_cycles_cnt.items():
+        if len(edges) > max_edges:
+            max_edges = len(edges)
+            revived_cycle = cycle_id
+    
+    next_state.instance.aeg.fences = [fence for fence in next_state.instance.aeg.fences if fence.id not in edge_cycles_cnt[revived_cycle] ]
+
+    return next_state
 
 def repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
-    print(destroyed.instance.aeg)
-    print(destroyed.instance.critical_cycles)
     solver = ILPSolver(destroyed.instance.aeg, destroyed.instance.critical_cycles)
     solver.fence_placement(0.5)  # Run the ILP solver to place initial fences
-    print("----")
-    print(destroyed.instance.aeg)
-    print(destroyed.instance.critical_cycles)
     return destroyed
 
+# greedy repair heuristic for continously adding fences on edges which are involved in most cycles until no cycles are left
 def greedy_repair_most_cycles(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     edge_cycles = {}
     id_cycle = 0
@@ -99,11 +122,13 @@ def greedy_repair_most_cycles(destroyed: ProblemState, rnd_state: rnd.RandomStat
         removed_cycles = edge_cycles[best_edge].copy()
         for cycle_id in removed_cycles:
             for edge in destroyed.instance.critical_cycles[cycle_id].edges:
-                del edge_cycles[edge.id]
+                if edge.id in edge_cycles:
+                    del edge_cycles[edge.id]
             
         destroyed.instance.aeg.fences.append(destroyed.instance.aeg.edges[best_edge])
     return destroyed
 
+# greedy repair heuristic for continously adding fences on edges which have most incoming edges until no cycles are left
 def greedy_repair_in_degrees(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     in_degrees = {}
     edge_cycles = {}
@@ -133,9 +158,9 @@ def greedy_repair_in_degrees(destroyed: ProblemState, rnd_state: rnd.RandomState
         removed_cycles = edge_cycles[best_edge].copy()
         for cycle_id in removed_cycles:
             for edge in destroyed.instance.critical_cycles[cycle_id].edges:
-                del edge_cycles[edge.id]
-                
-        in_degrees[destroyed.instance.aeg.edges[best_edge].source]-=1    
+                if edge.id in edge_cycles:
+                    del edge_cycles[edge.id]
+                 
         destroyed.instance.aeg.fences.append(destroyed.instance.aeg.edges[best_edge])
     return destroyed
 
@@ -155,7 +180,7 @@ if __name__ == "__main__":
 
     # Create ALNS and add one or more destroy and repair operators
     alns = ALNS(rnd.RandomState(seed=42))
-    alns.add_destroy_operator(destroy)
+    alns.add_destroy_operator(destroy_fences_same_cycle)
     alns.add_repair_operator(greedy_repair_in_degrees)
     # alns.add_repair_operator(repair)
 
