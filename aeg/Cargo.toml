@@ -11,6 +11,9 @@ petgraph = "0.6.5"
 serde = { version = "1.0.203", features = ["derive"], optional = true }
 indexmap = "2.2.6"
 itertools = "*"
+smallvec = "1.13.2"
+dashmap = "5.5.3"
+hashbrown = "0.14.5"
 
 [dev-dependencies]
 parser = { path = "../parser" }

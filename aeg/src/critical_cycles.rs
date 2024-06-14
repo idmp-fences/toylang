@@ -1,7 +1,9 @@
-use std::collections::HashMap;
+use hashbrown::HashMap;
+use hashbrown::HashSet;
 
 use itertools::Itertools;
 use petgraph::{graph::NodeIndex, prelude::EdgeIndex};
+use std::hash::Hash;
 
 use crate::{
     aeg::{MemoryId, Node, ThreadId},
@@ -20,7 +22,7 @@ pub struct CriticalCycle {
     pub potential_fences: Vec<EdgeIndex>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Architecture {
     Tso,
     Arm,
@@ -47,6 +49,12 @@ where
     memory_accesses: HashMap<M, Vec<usize>>,
     has_delay: bool,
     architecture: Architecture,
+}
+
+impl Hash for IncompleteMinimalCycle<ThreadId, MemoryId> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.cycle.hash(state);
+    }
 }
 
 impl PartialEq for IncompleteMinimalCycle<ThreadId, MemoryId> {
@@ -241,10 +249,10 @@ pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
 
     // DFS state, reset at each node
     let mut stack = Vec::new();
-    let mut discovered = Vec::new();
+    let mut discovered = HashSet::with_capacity(aeg.graph.node_count());
 
     // Nodes for which all critical cycles have been found.
-    let mut explored = Vec::new();
+    let mut explored = HashSet::with_capacity(aeg.graph.node_count());
 
     // Go through all nodes in the graph, starting a DFS from each node to find critical cycles
     for start_node in aeg.graph.node_indices() {
@@ -259,8 +267,7 @@ pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
         while let Some(cycle) = stack.pop() {
             let node = *cycle.last().expect("cycle is empty");
 
-            if !discovered.contains(&cycle) {
-                discovered.push(cycle.clone());
+            if discovered.insert(cycle.clone()) {
                 for succ in aeg.neighbors(node) {
                     if !explored.contains(&succ) {
                         let mut cycle = cycle.clone();
@@ -275,7 +282,7 @@ pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
         }
 
         all_cycles.append(&mut inner_cycles);
-        explored.push(start_node);
+        explored.insert(start_node);
     }
     all_cycles
 }
