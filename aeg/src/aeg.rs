@@ -273,7 +273,7 @@ fn handle_statement(
     match stmt {
         Statement::Modify(vwrite, Expr::Num(_)) | Statement::Assign(vwrite, Expr::Num(_)) => {
             let n = variables.len();
-            let vwrite = variables.entry(vwrite.clone()).or_insert(n).clone();
+            let vwrite = *variables.entry(vwrite.clone()).or_insert(n);
             // If the variable is a global, return the write node
             if globals.contains(&vwrite) {
                 let lhs: NodeIndex = graph.add_node(Node::Write(thread, vwrite));
@@ -291,9 +291,9 @@ fn handle_statement(
         | Statement::Assign(vwrite, Expr::Var(vread)) => {
             // We distinguish between 4 cases, whether both are globals, only one is a global, or none are globals
             let n: usize = variables.len();
-            let vwrite = variables.entry(vwrite.clone()).or_insert(n).clone();
+            let vwrite = *variables.entry(vwrite.clone()).or_insert(n);
             let n: usize = variables.len();
-            let vread = variables.entry(vread.clone()).or_insert(n).clone();
+            let vread = *variables.entry(vread.clone()).or_insert(n);
 
             if globals.contains(&vwrite) && globals.contains(&vread) {
                 let lhs = graph.add_node(Node::Write(thread, vwrite));
@@ -548,7 +548,7 @@ fn handle_expression(
         Expr::Num(_) => (),
         Expr::Var(vread) => {
             let n = variables.len();
-            let vread = variables.entry(vread.clone()).or_insert(n).clone();
+            let vread = *variables.entry(vread.clone()).or_insert(n);
             if globals.contains(&vread) {
                 let node = graph.add_node(Node::Read(thread, vread));
                 reads

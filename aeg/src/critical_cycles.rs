@@ -73,7 +73,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
             cycle: Vec::new(),
             thread_accesses: HashMap::new(),
             memory_accesses: HashMap::new(),
-            architecture: architecture,
+            architecture,
         }
     }
 
@@ -280,7 +280,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
     /// TODO: Really, it should be possible to add this check in the [IncompleteMinimalCycle::add_node] function,
     /// and not have to go through the cycle again. Worth looking into if this becomes a bottleneck.
     fn complete(self, aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
-        if !self.has_delay(&aeg) {
+        if !self.has_delay(aeg) {
             return vec![];
         }
 
