@@ -97,8 +97,8 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
             }
         };
 
-        let thread_accesses = self.thread_accesses.entry(thread.clone()).or_default();
-        let memory_accesses = self.memory_accesses.entry(addr.clone()).or_default();
+        let thread_accesses = self.thread_accesses.entry(*thread).or_default();
+        let memory_accesses = self.memory_accesses.entry(*addr).or_default();
 
         // MC1: Per thread, there are at most two accesses,
         // and the accesses are adjacent in the cycle
@@ -385,11 +385,11 @@ mod test {
     fn minimal_cycle() {
         let mut g = Aeg::new();
 
-        let Wy = g.add_node(Node::Write("t1".to_string(), "Wy".to_string()));
-        let Rx = g.add_node(Node::Read("t1".to_string(), "Rx".to_string()));
+        let Wy = g.add_node(Node::Write(0, 0));
+        let Rx = g.add_node(Node::Read(0, 1));
 
-        let Wx = g.add_node(Node::Write("t2".to_string(), "Wx".to_string()));
-        let Ry = g.add_node(Node::Read("t2".to_string(), "Ry".to_string()));
+        let Wx = g.add_node(Node::Write(1, 1));
+        let Ry = g.add_node(Node::Read(1, 0));
 
         g.update_edge(Wy, Rx, AegEdge::ProgramOrder);
         g.update_edge(Wx, Ry, AegEdge::ProgramOrder);
@@ -419,11 +419,11 @@ mod test {
     fn minimal_cycle_panics() {
         let mut g = Aeg::new();
 
-        let Wy = g.add_node(Node::Write("t1".to_string(), "Wy".to_string()));
-        let Rx = g.add_node(Node::Read("t1".to_string(), "Rx".to_string()));
+        let Wy = g.add_node(Node::Write(0, 0));
+        let Rx = g.add_node(Node::Read(0, 1));
 
-        let Wx = g.add_node(Node::Write("t2".to_string(), "Wx".to_string()));
-        let Ry = g.add_node(Node::Read("t2".to_string(), "Ry".to_string()));
+        let Wx = g.add_node(Node::Write(1, 1));
+        let Ry = g.add_node(Node::Read(1, 0));
 
         g.update_edge(Wy, Rx, AegEdge::ProgramOrder);
         g.update_edge(Wx, Ry, AegEdge::ProgramOrder);

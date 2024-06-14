@@ -1,4 +1,4 @@
-use std::iter::from_fn;
+use std::{borrow::Borrow, collections::HashMap, env::var, hash::Hash, iter::from_fn};
 
 use petgraph::{
     algo::astar,
@@ -13,8 +13,8 @@ use crate::critical_cycles::{self, Architecture, CriticalCycle};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-pub(crate) type ThreadId = String;
-pub(crate) type MemoryId = String;
+pub(crate) type ThreadId = usize;
+pub(crate) type MemoryId = usize;
 
 // todo: use `usize` to represent memory addresses
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,13 +183,25 @@ fn create_aeg(program: &Program) -> Aeg {
 
     // The init block is single-threaded, so none of the nodes are in the AEG.
     // All competing edges happen between threads.
+    let mut variables = HashMap::new();
+    variables.extend(
+        program
+            .global_vars
+            .iter()
+            .enumerate()
+            .map(|(i, str)| (str.clone(), i)),
+    );
+    let globals: Vec<usize> = variables.values().copied().collect();
 
     // Add the threads
     let mut thread_nodes = vec![];
+    let mut thread_names = vec![];
     for thread in &program.threads {
         let mut last_node = vec![];
         let mut read_nodes = vec![];
         let mut write_nodes = vec![];
+        let thread_id = thread_names.len();
+        thread_names.push(thread.name.clone());
         for stmt in &thread.instructions {
             handle_statement(
                 &mut g,
@@ -197,8 +209,9 @@ fn create_aeg(program: &Program) -> Aeg {
                 &mut read_nodes,
                 &mut write_nodes,
                 stmt,
-                program.global_vars.as_ref(),
-                thread.name.clone(),
+                &globals,
+                thread_id,
+                &mut variables,
             );
         }
         thread_nodes.push((write_nodes, read_nodes));
@@ -253,14 +266,17 @@ fn handle_statement(
     read_nodes: &mut Vec<NodeIndex>,
     write_nodes: &mut Vec<NodeIndex>,
     stmt: &Statement,
-    globals: &[String],
+    globals: &[usize],
     thread: ThreadId,
+    variables: &mut HashMap<String, usize>,
 ) -> Option<Vec<NodeIndex>> {
     match stmt {
         Statement::Modify(vwrite, Expr::Num(_)) | Statement::Assign(vwrite, Expr::Num(_)) => {
+            let n = variables.len();
+            let vwrite = variables.entry(vwrite.clone()).or_insert(n).clone();
             // If the variable is a global, return the write node
-            if globals.contains(vwrite) {
-                let lhs: NodeIndex = graph.add_node(Node::Write(thread, vwrite.clone()));
+            if globals.contains(&vwrite) {
+                let lhs: NodeIndex = graph.add_node(Node::Write(thread, vwrite));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, lhs);
                 *last_node = vec![lhs];
@@ -274,10 +290,14 @@ fn handle_statement(
         Statement::Modify(vwrite, Expr::Var(vread))
         | Statement::Assign(vwrite, Expr::Var(vread)) => {
             // We distinguish between 4 cases, whether both are globals, only one is a global, or none are globals
+            let n: usize = variables.len();
+            let vwrite = variables.entry(vwrite.clone()).or_insert(n).clone();
+            let n: usize = variables.len();
+            let vread = variables.entry(vread.clone()).or_insert(n).clone();
 
-            if globals.contains(vwrite) && globals.contains(vread) {
-                let lhs = graph.add_node(Node::Write(thread.clone(), vwrite.clone()));
-                let rhs = graph.add_node(Node::Read(thread, vread.clone()));
+            if globals.contains(&vwrite) && globals.contains(&vread) {
+                let lhs = graph.add_node(Node::Write(thread, vwrite));
+                let rhs = graph.add_node(Node::Read(thread, vread));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, lhs);
                 // Add a po edge from the rhs (read) to the lhs (write)
@@ -287,15 +307,15 @@ fn handle_statement(
                 write_nodes.push(lhs);
                 read_nodes.push(rhs);
                 Some(vec![lhs])
-            } else if globals.contains(vwrite) {
-                let lhs = graph.add_node(Node::Write(thread, vwrite.clone()));
+            } else if globals.contains(&vwrite) {
+                let lhs = graph.add_node(Node::Write(thread, vwrite));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, lhs);
                 *last_node = vec![lhs];
                 write_nodes.push(lhs);
                 Some(vec![lhs])
-            } else if globals.contains(vread) {
-                let rhs = graph.add_node(Node::Read(thread, vread.clone()));
+            } else if globals.contains(&vread) {
+                let rhs = graph.add_node(Node::Read(thread, vread));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, rhs);
                 *last_node = vec![rhs];
@@ -317,7 +337,7 @@ fn handle_statement(
         }
         Statement::If(cond, thn, els) => {
             let mut reads = vec![];
-            handle_condition(graph, &mut reads, cond, globals, thread.clone());
+            handle_condition(graph, &mut reads, cond, globals, thread, variables);
 
             // Add a po edge from the last node to the first read
             let mut first = None;
@@ -345,7 +365,8 @@ fn handle_statement(
                     write_nodes,
                     stmt,
                     globals,
-                    thread.clone(),
+                    thread,
+                    variables,
                 );
                 if first_thn.is_none() {
                     first_thn = f;
@@ -361,7 +382,8 @@ fn handle_statement(
                     write_nodes,
                     stmt,
                     globals,
-                    thread.clone(),
+                    thread,
+                    variables,
                 );
                 if first_els.is_none() {
                     first_els = f;
@@ -392,7 +414,7 @@ fn handle_statement(
         }
         Statement::While(cond, body) => {
             let mut reads = vec![];
-            handle_condition(graph, &mut reads, cond, globals, thread.clone());
+            handle_condition(graph, &mut reads, cond, globals, thread, variables);
 
             // Add a po edge from the last node to the first read
             let mut first_cond = None;
@@ -419,7 +441,8 @@ fn handle_statement(
                     write_nodes,
                     stmt,
                     globals,
-                    thread.clone(),
+                    thread,
+                    variables,
                 );
                 if first_body.is_none() {
                     first_body = f;
@@ -433,7 +456,7 @@ fn handle_statement(
 
                     // duplicate the condition node (run handle_condition again?)
                     let mut reads = vec![];
-                    handle_condition(graph, &mut reads, cond, globals, thread.clone());
+                    handle_condition(graph, &mut reads, cond, globals, thread, variables);
 
                     // add edges from the last node of the body to condition
                     if let Some(read) = reads.first() {
@@ -492,22 +515,23 @@ fn handle_condition(
     graph: &mut Aeg,
     reads: &mut Vec<NodeIndex>,
     cond: &CondExpr,
-    globals: &[String],
+    globals: &[usize],
     thread: ThreadId,
+    variables: &mut HashMap<String, usize>,
 ) {
     match cond {
-        CondExpr::Neg(e) => handle_condition(graph, reads, e, globals, thread),
+        CondExpr::Neg(e) => handle_condition(graph, reads, e, globals, thread, variables),
         CondExpr::And(e1, e2) => {
-            handle_condition(graph, reads, e1, globals, thread.clone());
-            handle_condition(graph, reads, e2, globals, thread);
+            handle_condition(graph, reads, e1, globals, thread, variables);
+            handle_condition(graph, reads, e2, globals, thread, variables);
         }
         CondExpr::Eq(e1, e2) => {
-            handle_expression(graph, reads, e1, globals, thread.clone());
-            handle_expression(graph, reads, e2, globals, thread);
+            handle_expression(graph, reads, e1, globals, thread, variables);
+            handle_expression(graph, reads, e2, globals, thread, variables);
         }
         CondExpr::Leq(e1, e2) => {
-            handle_expression(graph, reads, e1, globals, thread.clone());
-            handle_expression(graph, reads, e2, globals, thread);
+            handle_expression(graph, reads, e1, globals, thread, variables);
+            handle_expression(graph, reads, e2, globals, thread, variables);
         }
     }
 }
@@ -516,14 +540,17 @@ fn handle_expression(
     graph: &mut Aeg,
     reads: &mut Vec<NodeIndex>,
     expr: &Expr,
-    globals: &[String],
+    globals: &[usize],
     thread: ThreadId,
+    variables: &mut HashMap<String, usize>,
 ) {
     match expr {
         Expr::Num(_) => (),
         Expr::Var(vread) => {
-            if globals.contains(vread) {
-                let node = graph.add_node(Node::Read(thread, vread.clone()));
+            let n = variables.len();
+            let vread = variables.entry(vread.clone()).or_insert(n).clone();
+            if globals.contains(&vread) {
+                let node = graph.add_node(Node::Read(thread, vread));
                 reads
                     .last()
                     .map(|i| graph.add_edge(*i, node, AegEdge::ProgramOrder));

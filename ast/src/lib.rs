@@ -182,7 +182,12 @@ impl Display for FenceType {
 impl Formatter for Init {
     fn format(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
         match self {
-            Init::Assign(name, expr) => write!(f, "{:indent$}let {name}: u32 = {expr};", "", indent = indent)
+            Init::Assign(name, expr) => write!(
+                f,
+                "{:indent$}let {name}: u32 = {expr};",
+                "",
+                indent = indent
+            ),
         }
     }
 }
@@ -196,25 +201,32 @@ impl Display for Init {
 impl Formatter for Statement {
     fn format(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
         match self {
-            Statement::Assign(name, expr) => write!(f, "{:indent$}let {name}: u32 = {expr};", "", indent=indent),
-            Statement::Modify(name, expr) => write!(f, "{:indent$}{name} = {expr};", "", indent=indent),
-            Statement::Fence(fence) => write!(f, "{:indent$}Fence({fence});", "", indent=indent),
+            Statement::Assign(name, expr) => write!(
+                f,
+                "{:indent$}let {name}: u32 = {expr};",
+                "",
+                indent = indent
+            ),
+            Statement::Modify(name, expr) => {
+                write!(f, "{:indent$}{name} = {expr};", "", indent = indent)
+            }
+            Statement::Fence(fence) => write!(f, "{:indent$}Fence({fence});", "", indent = indent),
             Statement::If(cond, thn, els) => {
-                writeln!(f, "{:indent$}if ({cond}) {{", "", indent=indent)?;
+                writeln!(f, "{:indent$}if ({cond}) {{", "", indent = indent)?;
                 for stmt in thn {
                     stmt.format(f, indent + 4)?;
                     writeln!(f)?;
                 }
-                writeln!(f, "{:indent$}}} else {{", "", indent=indent)?;
+                writeln!(f, "{:indent$}}} else {{", "", indent = indent)?;
                 for stmt in els {
                     stmt.format(f, indent + 4)?;
                     writeln!(f)?;
                 }
-                write!(f, "{:indent$}}}", "", indent=indent)
+                write!(f, "{:indent$}}}", "", indent = indent)
             }
             Statement::While(cond, body) => {
                 if body.is_empty() {
-                    write!(f, "{:indent$}while ({cond}) {{}}", "", indent=indent)
+                    write!(f, "{:indent$}while ({cond}) {{}}", "", indent = indent)
                 } else {
                     writeln!(f, "{:indent$}while ({cond}) {{", "", indent = indent)?;
                     for stmt in body {
@@ -236,7 +248,13 @@ impl Display for Statement {
 
 impl Formatter for Thread {
     fn format(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
-        writeln!(f, "{:indent$}thread {name} {{", "", name=self.name, indent=indent)?;
+        writeln!(
+            f,
+            "{:indent$}thread {name} {{",
+            "",
+            name = self.name,
+            indent = indent
+        )?;
         for stmt in &self.instructions {
             stmt.format(f, indent + 4)?;
             writeln!(f)?;
