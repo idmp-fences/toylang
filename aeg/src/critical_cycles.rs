@@ -10,6 +10,7 @@ use crate::{
     simple_paths::all_simple_po_paths,
     AbstractEventGraph,
 };
+use smallvec::SmallVec;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -45,8 +46,8 @@ where
     /// The nodes in the cycle.
     cycle: Vec<NodeIndex>,
     // could be a shortvec (size 2 and s3 respectively)
-    thread_accesses: HashMap<T, Vec<usize>>,
-    memory_accesses: HashMap<M, Vec<usize>>,
+    thread_accesses: HashMap<T, SmallVec<[usize; 2]>>,
+    memory_accesses: HashMap<M, SmallVec<[usize; 3]>>,
     has_delay: bool,
     architecture: Architecture,
 }
@@ -270,6 +271,7 @@ pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
             if discovered.insert(cycle.clone()) {
                 for succ in aeg.neighbors(node) {
                     if !explored.contains(&succ) {
+                        // perf: check if node can be added, and only then clone
                         let mut cycle = cycle.clone();
                         if cycle.add_node(aeg, succ) {
                             stack.push(cycle);
