@@ -1,3 +1,4 @@
+use arrayvec::ArrayVec;
 use hashbrown::HashMap;
 use hashbrown::HashSet;
 
@@ -47,8 +48,8 @@ where
     /// The nodes in the cycle.
     cycle: Vec<NodeIndex>,
     // could be a shortvec (size 2 and s3 respectively)
-    thread_accesses: HashMap<T, SmallVec<[usize; 2]>>,
-    memory_accesses: HashMap<M, SmallVec<[usize; 3]>>,
+    thread_accesses: HashMap<T, ArrayVec<usize, 2>>,
+    memory_accesses: HashMap<M, ArrayVec<usize, 3>>,
     architecture: Architecture,
 }
 
@@ -89,12 +90,20 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
             };
             thread_accesses
                 .entry(thread_id)
-                .and_modify(|v: &mut SmallVec<[usize; 2]>| v.push(i))
-                .or_insert(smallvec![i]);
+                .and_modify(|v: &mut ArrayVec<usize, 2>| v.push(i))
+                .or_insert({
+                    let mut av = ArrayVec::new();
+                    av.push(i);
+                    av
+                });
             memory_accesses
                 .entry(memory_id)
-                .and_modify(|v: &mut SmallVec<[usize; 3]>| v.push(i))
-                .or_insert(smallvec![i]);
+                .and_modify(|v: &mut ArrayVec<usize, 3>| v.push(i))
+                .or_insert({
+                    let mut av = ArrayVec::new();
+                    av.push(i);
+                    av
+                });
         }
 
         IncompleteMinimalCycle {
