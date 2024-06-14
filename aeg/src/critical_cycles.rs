@@ -154,37 +154,56 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
         let thread_accesses = self.thread_accesses.get(thread);
         let memory_accesses = self.memory_accesses.get(addr);
 
-        // MC1: Per thread, there are at most two accesses,
+        // CS2: Per thread, there are at most two accesses,
         // and the accesses are adjacent in the cycle
-        let mc1 = thread_accesses.is_none()
+        // and the accesses are to different memory locations
+        let cs2 = thread_accesses.is_none()
             || match thread_accesses.unwrap().len() {
                 0 => true,
                 1 => {
                     let last = &aeg.graph[*self.cycle.last().unwrap()];
-                    let first = &aeg.graph[*self.cycle.first().unwrap()];
-                    last.thread_name() == thread || first.thread_name() == thread
-                } // return true only if this is an adjacent access
+                    if last.thread_name() == thread && last.address().unwrap() != addr {
+                        true
+                    } else {
+                        let first = &aeg.graph[*self.cycle.first().unwrap()];
+                        first.thread_name() == thread && first.address().unwrap() != addr
+                    }
+                } // return true only if this is an adjacent access and the access is to a different memory location
                 _ => false,
             };
 
-        if !mc1 {
+        if !cs2 {
             return false;
         }
 
         // MC2: For a memory location l, there are at most three accesses to l along the cycle,
         // and the accesses are adjacent in the cycle
-        let mc2 = memory_accesses.is_none()
+        // and the accesses are from different threads
+        let cs3 = memory_accesses.is_none()
             || match memory_accesses.unwrap().len() {
                 0 => true,
                 1 | 2 => {
-                    let last = &aeg.graph[*self.cycle.last().unwrap()];
-                    let first = &aeg.graph[*self.cycle.first().unwrap()];
-                    last.address().unwrap() == addr || first.address().unwrap() == addr
-                } // return true only if this is an adjacent access
+                    let is_same_thread = memory_accesses
+                        .unwrap()
+                        .iter()
+                        .map(|i| self.cycle[*i])
+                        .any(|node| aeg.graph[node].thread_name() == thread);
+                    if is_same_thread {
+                        false
+                    } else {
+                        let last = &aeg.graph[*self.cycle.last().unwrap()];
+                        if last.address().unwrap() == addr {
+                            true
+                        } else {
+                            let first = &aeg.graph[*self.cycle.first().unwrap()];
+                            first.address().unwrap() == addr
+                        }
+                    }
+                } // return true only if this is an adjacent access and the access is from a different thread
                 _ => false,
             };
 
-        mc1 && mc2
+        cs2 && cs3
     }
 
     fn add_node_unchecked(&mut self, aeg: &AbstractEventGraph, node: NodeIndex) {
