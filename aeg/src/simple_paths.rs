@@ -149,7 +149,7 @@ mod test {
 
         let paths = all_simple_po_paths(&aeg, first_wx, last_wx, 0, None);
 
-        // Either we skip the while loop or we take it
-        assert_eq!(dbg!(paths.collect::<Vec<_>>()).len(), 2);
+        // We always skip over the while loop
+        assert_eq!(dbg!(paths.collect::<Vec<_>>()).len(), 1);
     }
 }

@@ -917,15 +917,15 @@ mod test {
         let actual = CriticalCycle {
             cycle: vec![
                 NodeIndex::from(1),
+                NodeIndex::from(3),
                 NodeIndex::from(4),
                 NodeIndex::from(5),
-                NodeIndex::from(6),
             ],
             potential_fences: vec![
                 EdgeIndex::from(1),
                 EdgeIndex::from(2),
-                EdgeIndex::from(5),
-                EdgeIndex::from(6),
+                EdgeIndex::from(3),
+                EdgeIndex::from(4),
             ],
         };
 
@@ -967,40 +967,20 @@ mod test {
         let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
 
+        assert_eq!(ccs.len(), 1);
+
         let actual = CriticalCycle {
             cycle: vec![
                 NodeIndex::from(0),
+                NodeIndex::from(3),
                 NodeIndex::from(4),
                 NodeIndex::from(5),
-                NodeIndex::from(6),
             ],
-            potential_fences: vec![EdgeIndex::from(0), EdgeIndex::from(4), EdgeIndex::from(6)],
+            potential_fences: vec![EdgeIndex::from(0), EdgeIndex::from(3), EdgeIndex::from(4)],
         };
 
         assert_eq!(ccs[0].cycle, actual.cycle);
         assert_eq!(ccs[0].potential_fences, actual.potential_fences);
-
-        // two ways of going through the while
-        assert_eq!(ccs.len(), 2);
-
-        let actual = CriticalCycle {
-            cycle: vec![
-                NodeIndex::from(0),
-                NodeIndex::from(4),
-                NodeIndex::from(5),
-                NodeIndex::from(6),
-            ],
-            potential_fences: vec![
-                EdgeIndex::from(0),
-                EdgeIndex::from(1),
-                EdgeIndex::from(2),
-                EdgeIndex::from(5),
-                EdgeIndex::from(6),
-            ],
-        };
-
-        assert_eq!(ccs[1].cycle, actual.cycle);
-        assert_eq!(ccs[1].potential_fences, actual.potential_fences);
     }
 
     #[test]
@@ -1013,7 +993,7 @@ mod test {
 
         let ccs = critical_cycles(&aeg);
         // I'm not actually sure this is the correct amount, but it's to check for regressions
-        assert_eq!(ccs.len(), 15);
+        assert_eq!(ccs.len(), 19);
     }
 
     #[test]
@@ -1026,7 +1006,7 @@ mod test {
 
         let ccs = critical_cycles(&aeg);
         // I'm not actually sure this is the correct amount, but it's to check for regressions
-        assert_eq!(ccs.len(), 4769);
+        assert_eq!(ccs.len(), 5161);
     }
 
     // This panics because fences aren't implemented into the AEG yet.

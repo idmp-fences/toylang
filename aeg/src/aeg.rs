@@ -413,38 +413,13 @@ fn handle_statement(
             }
 
             // Condition contains a read
-            if let Some(f_cond) = first_cond {
-                if let Some(f_body) = first_body {
-                    // Condition duplication
+            if let Some(f) = first_cond {
+                // Add edges from the last node to the first
+                connect_previous(graph, last_node, f);
 
-                    // duplicate the condition node (run handle_condition again?)
-                    let mut reads = vec![];
-                    handle_condition(graph, &mut reads, cond, thread, var_map);
-
-                    // add edges from the last node of the body to condition
-                    if let Some(read) = reads.first() {
-                        connect_previous(graph, last_node, *read);
-                    }
-
-                    // add backjump edges from the last condition to the first of the body
-                    let last_read = reads.last().unwrap();
-                    for node in f_body.iter() {
-                        connect_previous(graph, &[*last_read], *node);
-                    }
-
-                    // The next node should connect to both conditions
-                    *last_node = branch;
-                    last_node.push(*last_read);
-
-                    Some(vec![f_cond])
-                } else {
-                    // Add backjump edges from the last node to the first
-                    connect_previous(graph, last_node, f_cond);
-
-                    // Next node should connect to the end of the condition
-
-                    Some(vec![f_cond])
-                }
+                // Next node should connect to the end of the condition
+                *last_node = branch;
+                Some(vec![f])
             }
             // Body contains a read or write operation
             else if let Some(f) = first_body {
@@ -758,13 +733,13 @@ mod tests {
         let aeg = &parsed.graph;
         dbg!(Dot::with_config(&aeg, &[]));
 
-        assert_eq!(aeg.node_count(), 6);
+        assert_eq!(aeg.node_count(), 5);
 
         assert_eq!(
             aeg.edge_references()
                 .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
                 .count(),
-            7
+            5
         );
 
         assert_eq!(
@@ -775,8 +750,7 @@ mod tests {
         );
 
         // find the t1 nodes
-        let ([wx, wy1, wy2, wz], [rx, rx_added]) =
-            get_nodes(&parsed, "t1", &["x", "y", "y", "z"], &["x", "x"]);
+        let ([wx, wy1, wy2, wz], [rx]) = get_nodes(&parsed, "t1", &["x", "y", "y", "z"], &["x"]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx, rx));
@@ -785,10 +759,7 @@ mod tests {
         assert!(aeg.contains_edge(rx, wz));
 
         assert!(aeg.contains_edge(wy1, wy2));
-        assert!(aeg.contains_edge(wy2, rx_added));
-
-        assert!(aeg.contains_edge(rx_added, wy1));
-        assert!(aeg.contains_edge(rx_added, wz));
+        assert!(aeg.contains_edge(wy2, rx));
     }
 
     #[test]
