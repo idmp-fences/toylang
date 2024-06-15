@@ -21,10 +21,26 @@ final {
 [Pest](https://pest.rs/) is used to parse the *toy* language.
 The full grammar can be found at [parser/src/toy.pest](parser/src/toy.pest).
 
+## Build 
+
+For a more optimized executable, run the following build command with the environment variable `RUSTFLAGS="-C target-cpu=native"`:
+
+```
+cargo build --release -p toy
+```
+
+The executable will be built in `./target/release/toy`
+
 ## Compile and run a .toy program
 
 ```
-cargo run -p toy -- test.toy
+./toy.exe run test.toy
+```
+
+## Generate the AEG and critical cycles for a .toy program
+
+```
+./toy.exe find-cycles test.toy
 ```
 
 ## Documentation
