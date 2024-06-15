@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, iter::from_fn};
+use std::iter::from_fn;
 
 use indexmap::IndexSet;
 use petgraph::{
