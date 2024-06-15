@@ -16,3 +16,8 @@ interpreter = { path = "interpreter" }
 parser = { path = "parser" }
 aeg = { path = "aeg", features = ["serde"] }
 serde_json = "1.0.117"
+
+[profile.release]
+# for debug symbols on cargo flamegraph
+debug = true
+lto = "fat"

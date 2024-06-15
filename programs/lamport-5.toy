@@ -1,0 +1,175 @@
+let x: u32 = 0;
+let y: u32 = 0;
+let b0: u32 = 0;
+let b1: u32 = 0;
+let b2: u32 = 0;
+let b3: u32 = 0;
+let b4: u32 = 0;
+
+thread t0 {
+    let i: u32 = 1;
+    let stop: u32 = 0;
+    while (stop == 0) {
+        b0 = 1;
+        x = i;
+        if (!(y == 0)) {
+            b0 = 0;
+            while (!(y == 0)) {}
+        } else {
+            y = i;
+            let a: u32 = x;
+            if (!(a == i)) {
+                b0 = 0;
+                while (b0 == 1) {}
+                while (b1 == 1) {}
+                while (b2 == 1) {}
+                while (b3 == 1) {}
+                while (b4 == 1) {}
+                if (!(y == i)) {
+                    while (!(y == 0)) {}
+                } else {
+                    stop = 1;
+                }
+            } else {
+                stop = 1;
+            }
+        }
+    }
+    y = 0;
+    b0 = 0;
+}
+
+thread t1 {
+    let i: u32 = 2;
+    let stop: u32 = 0;
+    while (stop == 0) {
+        b1 = 1;
+        x = i;
+        if (!(y == 0)) {
+            b1 = 0;
+            while (!(y == 0)) {}
+        } else {
+            y = i;
+            let a: u32 = x;
+            if (!(a == i)) {
+                b1 = 0;
+                while (b0 == 1) {}
+                while (b1 == 1) {}
+                while (b2 == 1) {}
+                while (b3 == 1) {}
+                while (b4 == 1) {}
+                if (!(y == i)) {
+                    while (!(y == 0)) {}
+                } else {
+                    stop = 1;
+                }
+            } else {
+                stop = 1;
+            }
+        }
+    }
+    y = 0;
+    b1 = 0;
+}
+
+thread t2 {
+    let i: u32 = 3;
+    let stop: u32 = 0;
+    while (stop == 0) {
+        b2 = 1;
+        x = i;
+        if (!(y == 0)) {
+            b2 = 0;
+            while (!(y == 0)) {}
+        } else {
+            y = i;
+            let a: u32 = x;
+            if (!(a == i)) {
+                b2 = 0;
+                while (b0 == 1) {}
+                while (b1 == 1) {}
+                while (b2 == 1) {}
+                while (b3 == 1) {}
+                while (b4 == 1) {}
+                if (!(y == i)) {
+                    while (!(y == 0)) {}
+                } else {
+                    stop = 1;
+                }
+            } else {
+                stop = 1;
+            }
+        }
+    }
+    y = 0;
+    b2 = 0;
+}
+
+thread t3 {
+    let i: u32 = 4;
+    let stop: u32 = 0;
+    while (stop == 0) {
+        b3 = 1;
+        x = i;
+        if (!(y == 0)) {
+            b3 = 0;
+            while (!(y == 0)) {}
+        } else {
+            y = i;
+            let a: u32 = x;
+            if (!(a == i)) {
+                b3 = 0;
+                while (b0 == 1) {}
+                while (b1 == 1) {}
+                while (b2 == 1) {}
+                while (b3 == 1) {}
+                while (b4 == 1) {}
+                if (!(y == i)) {
+                    while (!(y == 0)) {}
+                } else {
+                    stop = 1;
+                }
+            } else {
+                stop = 1;
+            }
+        }
+    }
+    y = 0;
+    b3 = 0;
+}
+
+thread t4 {
+    let i: u32 = 5;
+    let stop: u32 = 0;
+    while (stop == 0) {
+        b4 = 1;
+        x = i;
+        if (!(y == 0)) {
+            b4 = 0;
+            while (!(y == 0)) {}
+        } else {
+            y = i;
+            let a: u32 = x;
+            if (!(a == i)) {
+                b4 = 0;
+                while (b0 == 1) {}
+                while (b1 == 1) {}
+                while (b2 == 1) {}
+                while (b3 == 1) {}
+                while (b4 == 1) {}
+                if (!(y == i)) {
+                    while (!(y == 0)) {}
+                } else {
+                    stop = 1;
+                }
+            } else {
+                stop = 1;
+            }
+        }
+    }
+    y = 0;
+    b4 = 0;
+}
+
+final {
+}
