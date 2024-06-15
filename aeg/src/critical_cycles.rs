@@ -426,7 +426,6 @@ pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
 /// allow critical cycles through the other branch.
 fn potential_fences(aeg: &AbstractEventGraph, cycle: &[NodeIndex]) -> Vec<Vec<EdgeIndex>> {
     let n = cycle.len();
-    let mut potential_fences_skip = vec![];
     let mut potential_fences_paths: Vec<Vec<Vec<_>>> = vec![];
     for i in 0..n {
         let j = {
@@ -450,65 +449,51 @@ fn potential_fences(aeg: &AbstractEventGraph, cycle: &[NodeIndex]) -> Vec<Vec<Ed
             (Architecture::Power, _, _) => {}
         }
 
-        if aeg.config.skip_branches {
-            if let Some(path) = aeg.po_between(u, v) {
-                potential_fences_skip.extend(
-                    path.windows(2)
-                        .map(|pair| aeg.graph.find_edge(pair[0], pair[1]).unwrap()),
-                );
-            }
-        } else {
-            let paths: Vec<Vec<_>> = all_simple_po_paths(aeg, u, v, 0, None)
-                .map(|path| {
-                    path.windows(2)
-                        .map(|pair| aeg.graph.find_edge(pair[0], pair[1]).unwrap())
-                        .collect()
-                })
-                .collect();
-            if !paths.is_empty() {
-                potential_fences_paths.push(paths);
-            }
+        let paths: Vec<Vec<_>> = all_simple_po_paths(aeg, u, v, 0, None)
+            .map(|path| {
+                path.windows(2)
+                    .map(|pair| aeg.graph.find_edge(pair[0], pair[1]).unwrap())
+                    .collect()
+            })
+            .collect();
+        if !paths.is_empty() {
+            potential_fences_paths.push(paths);
         }
     }
 
-    if aeg.config.skip_branches {
-        vec![potential_fences_skip]
-    } else {
-        // Each item in potential fences paths contains a list of paths
-        // from two nodes in the cycle, hence potential fences paths is
-        // a triply nested loop. Here we reduce the loop into all the
-        // potential paths that result from it by taking the cartesian product
+    // Each item in potential fences paths contains a list of paths
+    // from two nodes in the cycle, hence potential fences paths is
+    // a triply nested loop. Here we reduce the loop into all the
+    // potential paths that result from it by taking the cartesian product
 
-        // As an example:
-        //
-        // [
-        //   [
-        //     [a, z ,b]
-        //   ],
-        //   [
-        //     [y, c],
-        //     [x, c]
-        //   ]
-        // ]
-        //
-        // turns into
-        //
-        // [
-        //   [a, z, b, y, c],
-        //   [a, z, b, x, c]
-        // ]
-        potential_fences_paths.iter().fold(vec![vec![]], |acc, e| {
-            acc.iter()
-                .cartesian_product(e)
-                .map(|(t1, t2)| t1.iter().chain(t2).copied().collect::<Vec<_>>())
-                .collect()
-        })
-    }
+    // As an example:
+    //
+    // [
+    //   [
+    //     [a, z ,b]
+    //   ],
+    //   [
+    //     [y, c],
+    //     [x, c]
+    //   ]
+    // ]
+    //
+    // turns into
+    //
+    // [
+    //   [a, z, b, y, c],
+    //   [a, z, b, x, c]
+    // ]
+    potential_fences_paths.iter().fold(vec![vec![]], |acc, e| {
+        acc.iter()
+            .cartesian_product(e)
+            .map(|(t1, t2)| t1.iter().chain(t2).copied().collect::<Vec<_>>())
+            .collect()
+    })
 }
 
 #[cfg(test)]
 mod test {
-    use indexmap::IndexSet;
     use petgraph::dot::Dot;
 
     use super::Architecture::*;
@@ -643,7 +628,6 @@ mod test {
             &ast,
             AegConfig {
                 architecture: Architecture::Power,
-                skip_branches: false,
             },
         );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
@@ -690,7 +674,6 @@ mod test {
             &ast,
             AegConfig {
                 architecture: Power,
-                skip_branches: true,
             },
         );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
@@ -787,23 +770,20 @@ mod test {
             &program,
             AegConfig {
                 architecture: Power,
-                skip_branches: true,
             },
         );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
         let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
-        assert_eq!(ccs.len(), 2);
+        // There are 2 critical cycles, but one is duplicated because of the pf's that are different accross each branch
+        assert_eq!(ccs.len(), 3);
 
-        // One of the cycles, passing over the if block, has only 1 potential fence placement
-        // on the skip connection. The other has potential fence placements inside the if block.
-        for cc in ccs {
-            if cc.cycle.len() == 3 {
-                assert_eq!(cc.potential_fences.len(), 1);
-            } else if cc.cycle.len() == 4 {
-                assert_eq!(cc.potential_fences.len(), 3);
-            }
-        }
+        // The cycle accross the branch
+        assert_eq!(ccs[0].potential_fences.len(), 4);
+        assert_eq!(ccs[1].potential_fences.len(), 4);
+
+        // The cycle from inside the branch
+        assert_eq!(ccs[2].potential_fences.len(), 3);
     }
 
     #[test]
@@ -843,25 +823,15 @@ mod test {
             &program,
             AegConfig {
                 architecture: Power,
-                skip_branches: true,
             },
         );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
         let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
-        assert_eq!(ccs.len(), 1);
-
-        let aeg = AbstractEventGraph::with_config(
-            &program,
-            AegConfig {
-                architecture: Power,
-                skip_branches: false,
-            },
-        );
-        let ccs = critical_cycles(&aeg);
-        dbg!(&ccs);
-        // 4 branches + 1 skip connection
-        assert_eq!(ccs.len(), 5);
+        // 1 critical cycle with 4 branches
+        assert_eq!(ccs.len(), 4);
+        let cycle = ccs[0].cycle.clone();
+        assert!(ccs.into_iter().map(|cc| cc.cycle).all(|c| c == cycle));
     }
 
     #[test]
@@ -901,25 +871,12 @@ mod test {
             &program,
             AegConfig {
                 architecture: Power,
-                skip_branches: true,
             },
         );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
         let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
-        assert_eq!(ccs.len(), 1);
-
-        let aeg = AbstractEventGraph::with_config(
-            &program,
-            AegConfig {
-                architecture: Power,
-                skip_branches: false,
-            },
-        );
-        let ccs = critical_cycles(&aeg);
-        dbg!(&ccs);
-        // 2 branches + 1 skip connection
-        assert_eq!(ccs.len(), 3);
+        assert_eq!(ccs.len(), 2);
     }
 
     #[test]
@@ -948,7 +905,6 @@ mod test {
             &program,
             AegConfig {
                 architecture: Power,
-                skip_branches: true,
             },
         );
 
@@ -961,33 +917,20 @@ mod test {
         let actual = CriticalCycle {
             cycle: vec![
                 NodeIndex::from(1),
+                NodeIndex::from(3),
                 NodeIndex::from(4),
                 NodeIndex::from(5),
-                NodeIndex::from(6),
             ],
             potential_fences: vec![
                 EdgeIndex::from(1),
                 EdgeIndex::from(2),
-                EdgeIndex::from(5),
-                EdgeIndex::from(6),
+                EdgeIndex::from(3),
+                EdgeIndex::from(4),
             ],
         };
 
         assert_eq!(ccs[0].cycle, actual.cycle);
         assert_eq!(ccs[0].potential_fences, actual.potential_fences);
-
-        let aeg = AbstractEventGraph::with_config(
-            &program,
-            AegConfig {
-                architecture: Power,
-                skip_branches: false,
-            },
-        );
-
-        // since we're already in the while loop, there are no extra cc's
-        let ccs = critical_cycles(&aeg);
-        assert_eq!(ccs.len(), 1);
-        dbg!(&ccs);
     }
 
     #[test]
@@ -1016,7 +959,6 @@ mod test {
             &program,
             AegConfig {
                 architecture: Power,
-                skip_branches: true,
             },
         );
 
@@ -1024,53 +966,21 @@ mod test {
 
         let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
+
         assert_eq!(ccs.len(), 1);
 
         let actual = CriticalCycle {
             cycle: vec![
                 NodeIndex::from(0),
+                NodeIndex::from(3),
                 NodeIndex::from(4),
                 NodeIndex::from(5),
-                NodeIndex::from(6),
             ],
-            potential_fences: vec![EdgeIndex::from(0), EdgeIndex::from(4), EdgeIndex::from(6)],
+            potential_fences: vec![EdgeIndex::from(0), EdgeIndex::from(3), EdgeIndex::from(4)],
         };
 
         assert_eq!(ccs[0].cycle, actual.cycle);
         assert_eq!(ccs[0].potential_fences, actual.potential_fences);
-
-        let aeg = AbstractEventGraph::with_config(
-            &program,
-            AegConfig {
-                architecture: Power,
-                skip_branches: false,
-            },
-        );
-
-        let ccs = critical_cycles(&aeg);
-        dbg!(&ccs);
-
-        // two ways of going through the while
-        assert_eq!(ccs.len(), 2);
-
-        let actual = CriticalCycle {
-            cycle: vec![
-                NodeIndex::from(0),
-                NodeIndex::from(4),
-                NodeIndex::from(5),
-                NodeIndex::from(6),
-            ],
-            potential_fences: vec![
-                EdgeIndex::from(0),
-                EdgeIndex::from(1),
-                EdgeIndex::from(2),
-                EdgeIndex::from(5),
-                EdgeIndex::from(6),
-            ],
-        };
-
-        assert_eq!(ccs[1].cycle, actual.cycle);
-        assert_eq!(ccs[1].potential_fences, actual.potential_fences);
     }
 
     #[test]
@@ -1079,17 +989,11 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = AbstractEventGraph::with_config(
-            &program,
-            AegConfig {
-                architecture: Tso,
-                skip_branches: true,
-            },
-        );
+        let aeg = AbstractEventGraph::with_config(&program, AegConfig { architecture: Tso });
 
         let ccs = critical_cycles(&aeg);
         // I'm not actually sure this is the correct amount, but it's to check for regressions
-        assert_eq!(ccs.len(), 15);
+        assert_eq!(ccs.len(), 19);
     }
 
     #[test]
@@ -1098,17 +1002,11 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = AbstractEventGraph::with_config(
-            &program,
-            AegConfig {
-                architecture: Tso,
-                skip_branches: true,
-            },
-        );
+        let aeg = AbstractEventGraph::with_config(&program, AegConfig { architecture: Tso });
 
         let ccs = critical_cycles(&aeg);
         // I'm not actually sure this is the correct amount, but it's to check for regressions
-        assert_eq!(ccs.len(), 4769);
+        assert_eq!(ccs.len(), 5161);
     }
 
     // This panics because fences aren't implemented into the AEG yet.
@@ -1137,7 +1035,6 @@ mod test {
             &program,
             AegConfig {
                 architecture: Power,
-                skip_branches: true,
             },
         );
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));

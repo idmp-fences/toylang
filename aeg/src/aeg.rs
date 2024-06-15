@@ -68,14 +68,12 @@ pub enum Fence {
 #[derive(Debug, Clone, Copy)]
 pub struct AegConfig {
     pub architecture: Architecture,
-    pub skip_branches: bool,
 }
 
 impl Default for AegConfig {
     fn default() -> Self {
         Self {
             architecture: Architecture::Tso,
-            skip_branches: true,
         }
     }
 }
@@ -176,7 +174,7 @@ impl AbstractEventGraph {
     }
 }
 
-pub(crate) type Aeg = DiGraph<Node, AegEdge>;
+pub type Aeg = DiGraph<Node, AegEdge>;
 
 fn create_aeg(program: &Program) -> AbstractEventGraph {
     let mut g: Aeg = DiGraph::new();
@@ -239,24 +237,9 @@ fn create_aeg(program: &Program) -> AbstractEventGraph {
     }
 }
 
-const ADD_SKIP_CONNECTION: bool = true;
-
 /// Adds the corresponding nodes for a statement to the AEG and returns the index of the first nodes.
 /// Only the global read/write nodes are added to the AEG as they are the only ones that can create competing edges.
 /// The local read/write nodes are not add to the AEG as they are not relevant for the competing edge calculation.
-///
-/// # Notes
-///
-/// ## If branch skip connections
-///
-/// In the if branch, we introduce a po connection 'skipping over' the entire if block. As a result, since the critical cycles
-/// searches for the shortest path between two nodes, if a node is straddeling an if block, there will be no potential fence
-/// placements inside the if block since the shortest path takes the skip connection. This is an approximation/heuristic that
-/// could be fixed by instead having an `all-simple-paths` algorithm to look for po paths between two nodes instead. This approach
-/// would also require some rethinking of the while blocks, however.
-///
-/// The while blocks themselves already have skip connections that would be taken to skip over the while block. With an all-simple-paths
-/// approach, we would consider every possible execution (go inside if/while block or not) and return a list of potential fence placements.
 fn handle_statement(
     graph: &mut Aeg,
     last_node: &mut Vec<NodeIndex>,
@@ -343,9 +326,6 @@ fn handle_statement(
             // Move the read nodes into the read node list
             read_nodes.append(&mut reads);
 
-            // Node just before we branch that's used to introduce the skip connection later on
-            let condition_or_last_node = last_node.clone();
-
             let mut thn_branch = last_node.clone();
             let mut first_thn = None;
             for stmt in thn {
@@ -383,11 +363,6 @@ fn handle_statement(
                 if !last_node.contains(node) {
                     last_node.push(*node);
                 }
-            }
-
-            // Add PO edge that skips over if block
-            if ADD_SKIP_CONNECTION {
-                last_node.extend(condition_or_last_node);
             }
 
             if first.is_some() {
@@ -438,38 +413,13 @@ fn handle_statement(
             }
 
             // Condition contains a read
-            if let Some(f_cond) = first_cond {
-                if let Some(f_body) = first_body {
-                    // Condition duplication
+            if let Some(f) = first_cond {
+                // Add edges from the last node to the first
+                connect_previous(graph, last_node, f);
 
-                    // duplicate the condition node (run handle_condition again?)
-                    let mut reads = vec![];
-                    handle_condition(graph, &mut reads, cond, thread, var_map);
-
-                    // add edges from the last node of the body to condition
-                    if let Some(read) = reads.first() {
-                        connect_previous(graph, last_node, *read);
-                    }
-
-                    // add backjump edges from the last condition to the first of the body
-                    let last_read = reads.last().unwrap();
-                    for node in f_body.iter() {
-                        connect_previous(graph, &[*last_read], *node);
-                    }
-
-                    // The next node should connect to both conditions
-                    *last_node = branch;
-                    last_node.push(*last_read);
-
-                    Some(vec![f_cond])
-                } else {
-                    // Add backjump edges from the last node to the first
-                    connect_previous(graph, last_node, f_cond);
-
-                    // Next node should connect to the end of the condition
-
-                    Some(vec![f_cond])
-                }
+                // Next node should connect to the end of the condition
+                *last_node = branch;
+                Some(vec![f])
             }
             // Body contains a read or write operation
             else if let Some(f) = first_body {
@@ -740,7 +690,7 @@ mod tests {
             aeg.edge_references()
                 .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
                 .count(),
-            6 + 1 // there is an extra skip connection skipping over the if statement
+            6
         );
 
         assert_eq!(
@@ -783,13 +733,13 @@ mod tests {
         let aeg = &parsed.graph;
         dbg!(Dot::with_config(&aeg, &[]));
 
-        assert_eq!(aeg.node_count(), 6);
+        assert_eq!(aeg.node_count(), 5);
 
         assert_eq!(
             aeg.edge_references()
                 .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
                 .count(),
-            7
+            5
         );
 
         assert_eq!(
@@ -800,8 +750,7 @@ mod tests {
         );
 
         // find the t1 nodes
-        let ([wx, wy1, wy2, wz], [rx, rx_added]) =
-            get_nodes(&parsed, "t1", &["x", "y", "y", "z"], &["x", "x"]);
+        let ([wx, wy1, wy2, wz], [rx]) = get_nodes(&parsed, "t1", &["x", "y", "y", "z"], &["x"]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx, rx));
@@ -810,10 +759,7 @@ mod tests {
         assert!(aeg.contains_edge(rx, wz));
 
         assert!(aeg.contains_edge(wy1, wy2));
-        assert!(aeg.contains_edge(wy2, rx_added));
-
-        assert!(aeg.contains_edge(rx_added, wy1));
-        assert!(aeg.contains_edge(rx_added, wz));
+        assert!(aeg.contains_edge(wy2, rx));
     }
 
     #[test]
