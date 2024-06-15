@@ -49,10 +49,14 @@ enum Commands {
         /// Memory model to use, in order to calculate the appropriate delays
         #[arg(short, long, default_value_t, value_enum)]
         memory_model: ArgMemoryModel,
+
+        /// File to store AEG/Cycles
+        #[arg(short, long)]
+        output_file: Option<PathBuf>,
     },
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
     match &args.command {
@@ -60,8 +64,13 @@ fn main() {
             let source = fs::read_to_string(&file).expect("Failed to read input file!");
             let program = parser::parse(&source).unwrap();
             interpreter::execute(&program, MemoryModel::from(memory_model));
+            Ok(())
         }
-        Commands::FindCycles { file, memory_model } => {
+        Commands::FindCycles {
+            file,
+            memory_model,
+            output_file,
+        } => {
             let source = fs::read_to_string(&file).expect("Failed to read input file!");
             let program = parser::parse(&source).unwrap();
             let architecture = match memory_model {
@@ -70,11 +79,23 @@ fn main() {
             };
             let aeg = AbstractEventGraph::with_config(&program, AegConfig { architecture });
             let ccs = aeg.find_critical_cycles();
-            println!(
-                "{{\"aeg\":{},\"critical_cycles\":{}}}",
-                serde_json::to_string(&aeg.graph).unwrap(),
-                serde_json::to_string(&ccs).unwrap()
-            );
+            if let Some(out) = output_file {
+                std::fs::write(
+                    out,
+                    format!(
+                        "{{\"aeg\":{},\"critical_cycles\":{}}}",
+                        serde_json::to_string(&aeg.graph).unwrap(),
+                        serde_json::to_string(&ccs).unwrap()
+                    ),
+                )
+            } else {
+                println!(
+                    "{{\"aeg\":{},\"critical_cycles\":{}}}",
+                    serde_json::to_string(&aeg.graph).unwrap(),
+                    serde_json::to_string(&ccs).unwrap()
+                );
+                Ok(())
+            }
         }
     }
 }
