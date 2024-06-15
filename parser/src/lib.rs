@@ -202,11 +202,11 @@ fn parse_cond_atom(pair: pest::iterators::Pair<Rule>) -> CondExpr {
                 Rule::condleq => CondExpr::Leq(left, right),
                 _ => unreachable!(),
             }
-        },
+        }
         Rule::condneg => {
             let inner_pair = inner_pair.into_inner().next().unwrap();
             CondExpr::Neg(Box::new(parse_cond_expr(inner_pair)))
-        },
+        }
         Rule::condparen => parse_cond_expr(inner_pair.into_inner().next().unwrap()),
         _ => unreachable!("Expected eq, neg, or paren, got {:?}", inner_pair.as_rule()),
     }
@@ -351,22 +351,28 @@ mod tests {
         let source = "if (x == 0) { y = 1; } else { y = 2; }";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
         let stmt = parse_statement(program.next().unwrap(), &[]);
-        assert_eq!(stmt, Statement::If(
-            CondExpr::Eq(Expr::Var("x".to_owned()), Expr::Num(0)),
-            vec![Statement::Modify("y".to_owned(), Expr::Num(1))],
-            vec![Statement::Modify("y".to_owned(), Expr::Num(2))],
-        ));
+        assert_eq!(
+            stmt,
+            Statement::If(
+                CondExpr::Eq(Expr::Var("x".to_owned()), Expr::Num(0)),
+                vec![Statement::Modify("y".to_owned(), Expr::Num(1))],
+                vec![Statement::Modify("y".to_owned(), Expr::Num(2))],
+            )
+        );
     }
-    
+
     #[test]
     fn parse_while() {
         let source = "while (x == 0) { y = 1; }";
         let mut program = ToyParser::parse(Rule::stmt, source).unwrap();
         let stmt = parse_statement(program.next().unwrap(), &[]);
-        assert_eq!(stmt, Statement::While(
-            CondExpr::Eq(Expr::Var("x".to_owned()), Expr::Num(0)),
-            vec![Statement::Modify("y".to_owned(), Expr::Num(1))],
-        ));
+        assert_eq!(
+            stmt,
+            Statement::While(
+                CondExpr::Eq(Expr::Var("x".to_owned()), Expr::Num(0)),
+                vec![Statement::Modify("y".to_owned(), Expr::Num(1))],
+            )
+        );
     }
 
     #[test]

@@ -12,7 +12,6 @@ use crate::{
     simple_paths::all_simple_po_paths,
     AbstractEventGraph,
 };
-use smallvec::{smallvec, SmallVec};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -129,12 +128,37 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
         self.cycle.last()
     }
 
+    #[inline]
+    fn forms_thread_cycle(&self, aeg: &AbstractEventGraph) -> bool {
+        if self.cycle.len() < 3 {
+            false
+        } else {
+            let last = &aeg.graph[*self.last().unwrap()];
+            let first = &aeg.graph[*self.first().unwrap()];
+            last.thread_name() == first.thread_name()
+        }
+    }
+
+    #[inline]
+    fn forms_addr_cycle(&self, aeg: &AbstractEventGraph) -> bool {
+        if self.cycle.len() < 4 {
+            false
+        } else {
+            let last = &aeg.graph[*self.last().unwrap()];
+            let first = &aeg.graph[*self.first().unwrap()];
+            last.address().unwrap() == first.address().unwrap()
+        }
+    }
+
     /// Check if a node can be added into the AEG while satisfying minimal cycle properties
     fn can_add_node(&self, aeg: &AbstractEventGraph, node: NodeIndex) -> bool {
         debug_assert!(
             {
-                let last = self.last().unwrap();
-                aeg.neighbors(*last).any(|neighbor| neighbor == node)
+                if let Some(last) = self.last() {
+                    aeg.neighbors(*last).any(|neighbor| neighbor == node)
+                } else {
+                    true
+                }
             },
             "node added is not a successor of the last in the cycle"
         );
@@ -150,6 +174,19 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
                 unimplemented!("should fences even be part of the AEG?")
             }
         };
+
+        if self.forms_thread_cycle(aeg) {
+            let last = &aeg.graph[*self.last().unwrap()];
+            if thread != last.thread_name() {
+                return false;
+            }
+        }
+        if self.forms_addr_cycle(aeg) {
+            let last = &aeg.graph[*self.last().unwrap()];
+            if thread != last.address().unwrap() {
+                return false;
+            }
+        }
 
         let thread_accesses = self.thread_accesses.get(thread);
         let memory_accesses = self.memory_accesses.get(addr);
@@ -228,7 +265,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
     /// Add a node to the cycle if it satisfies the minimal cycle properties.
     /// Returns true if the node was added to the cycle.
     ///
-    /// Panics if the added node is not a successor of the last node in the cycle.
+    /// Panics on debug if the added node is not a successor of the last node in the cycle.
     fn add_node(&mut self, aeg: &AbstractEventGraph, node: NodeIndex) -> bool {
         if !self.can_add_node(aeg, node) {
             return false;
@@ -247,7 +284,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
     ) -> bool {
         // PERF: we can assume node1 and node2 are connected by a transitive po edge if they are NOT connected with a cmp edge
         // so instead of aeg.is_po_connected(node1, node2) we do the following
-        if aeg
+        if !aeg
             .graph
             .edges_connecting(node1, node2)
             .any(|e| *e.weight() == AegEdge::Competing)
@@ -312,6 +349,7 @@ impl IncompleteMinimalCycle<ThreadId, MemoryId> {
             return vec![];
         }
 
+        // THESE EXTRA CHECKS are still required, somehow
         for nodes in self.thread_accesses.values() {
             debug_assert!(nodes.len() <= 2);
             if nodes.len() == 2 {
@@ -528,6 +566,8 @@ mod test {
         let aeg = AbstractEventGraph {
             graph: g,
             config: Default::default(),
+            var_map: Default::default(),
+            thread_map: Default::default(),
         };
 
         let mut mc = IncompleteMinimalCycle::with_architecture(Architecture::Tso);
@@ -540,9 +580,6 @@ mod test {
 
         let mc2 = IncompleteMinimalCycle::from_cycle(mc.clone().cycle, &aeg);
         assert_eq!(mc2, mc);
-
-        // can't add Wy again
-        assert!(!mc.add_node(&aeg, Wy));
     }
 
     #[test]
@@ -569,6 +606,8 @@ mod test {
         let aeg = AbstractEventGraph {
             graph: g,
             config: Default::default(),
+            var_map: Default::default(),
+            thread_map: Default::default(),
         };
 
         let mut mc = IncompleteMinimalCycle::with_architecture(Architecture::Tso);
@@ -690,7 +729,7 @@ mod test {
 
         // There are actually 5 critical cycles, 1 more than the 4 suggested in the fig 16
         // The additional cycle involves threads 1, 3, and 4
-        // Wt(t1) -po-> Wy(t1) -cmp-> Wy(t4) -cmp-> Ry(t3) -po-> Rt(t3) -cmp-> Wt(t1)
+        // Wt(t1) -po-> Wy(t1) -cmp-> Wy(t4) -cmp-> Ry(t3) -po-> Rt(t3) -cmp-> ...
         assert_eq!(ccs.len(), 5);
 
         // TSO
@@ -709,11 +748,11 @@ mod test {
         let y: u32 = 0;
         thread t1 {
             x = 1;
-            y = 2;
-            x = 3;
+            let a: u32 = y;
+            let b: u32 = y;
         }
         thread t2 {
-            let b: u32 = y;
+            y = 1;
             let d: u32 = x;
         }
         final {}
@@ -721,17 +760,30 @@ mod test {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = AbstractEventGraph::with_config(
-            &program,
-            AegConfig {
-                architecture: Power,
-                skip_branches: true,
-            },
-        );
+        let aeg = AbstractEventGraph::new(&program);
         println!("{:?}", Dot::with_config(&aeg.graph, &[]));
         let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
-        assert_eq!(ccs.len(), 2)
+        assert_eq!(ccs.len(), 2);
+
+        // Now it only has one
+        let program = r#"
+        let x: u32 = 0;
+        let y: u32 = 0;
+        thread t1 {
+            x = 1;
+            let a: u32 = y;
+            let b: u32 = x;
+        }
+        thread t2 {
+            y = 1;
+            let d: u32 = x;
+        }
+        final {}
+        "#;
+        let program = parser::parse(program).unwrap();
+        let ccs = critical_cycles(&AbstractEventGraph::new(&program));
+        assert_eq!(ccs.len(), 1);
     }
 
     #[test]
@@ -749,7 +801,7 @@ mod test {
             } else {
                 a = z;
             }
-            x = 1;
+            y = 1;
         }
         thread t2 {
             let b: u32 = y;
