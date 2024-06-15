@@ -424,7 +424,7 @@ pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
             if discovered.insert(cycle.clone()) {
                 for succ in aeg.neighbors(node) {
                     if !explored.contains(&succ) {
-                        // perf: check if node can be added, and only then clone
+                        // PERF: check if node can be added, and only then clone
                         if cycle.can_add_node(aeg, succ) {
                             let mut cycle = cycle.clone();
                             cycle.add_node_unchecked(aeg, succ);
@@ -1119,6 +1119,23 @@ mod test {
 
         let ccs = critical_cycles(&aeg);
         dbg!(&ccs);
+    }
+
+    #[test]
+    fn lamport_3() {
+        let program = include_str!("../../programs/lamport-3.toy");
+
+        let program = parser::parse(program).unwrap();
+
+        let aeg = AbstractEventGraph::with_config(
+            &program,
+            AegConfig {
+                architecture: Power,
+                skip_branches: true,
+            },
+        );
+
+        let _ccs = critical_cycles(&aeg);
     }
 
     // This panics because fences aren't implemented into the AEG yet.
