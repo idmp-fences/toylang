@@ -123,9 +123,8 @@ mod test {
 
         let paths = all_simple_po_paths(&aeg, first_wx, last_wx, 0, None);
 
-        // Three possible paths: one per branch + one skip
-        // (although, does the skip need to be included if we're not in skip mode?)
-        assert_eq!(dbg!(paths.collect::<Vec<_>>()).len(), 3);
+        // Three possible paths: one per branch
+        assert_eq!(dbg!(paths.collect::<Vec<_>>()).len(), 2);
     }
 
     #[test]

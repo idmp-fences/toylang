@@ -68,14 +68,12 @@ pub enum Fence {
 #[derive(Debug, Clone, Copy)]
 pub struct AegConfig {
     pub architecture: Architecture,
-    pub skip_branches: bool,
 }
 
 impl Default for AegConfig {
     fn default() -> Self {
         Self {
             architecture: Architecture::Tso,
-            skip_branches: true,
         }
     }
 }
@@ -239,24 +237,9 @@ fn create_aeg(program: &Program) -> AbstractEventGraph {
     }
 }
 
-const ADD_SKIP_CONNECTION: bool = true;
-
 /// Adds the corresponding nodes for a statement to the AEG and returns the index of the first nodes.
 /// Only the global read/write nodes are added to the AEG as they are the only ones that can create competing edges.
 /// The local read/write nodes are not add to the AEG as they are not relevant for the competing edge calculation.
-///
-/// # Notes
-///
-/// ## If branch skip connections
-///
-/// In the if branch, we introduce a po connection 'skipping over' the entire if block. As a result, since the critical cycles
-/// searches for the shortest path between two nodes, if a node is straddeling an if block, there will be no potential fence
-/// placements inside the if block since the shortest path takes the skip connection. This is an approximation/heuristic that
-/// could be fixed by instead having an `all-simple-paths` algorithm to look for po paths between two nodes instead. This approach
-/// would also require some rethinking of the while blocks, however.
-///
-/// The while blocks themselves already have skip connections that would be taken to skip over the while block. With an all-simple-paths
-/// approach, we would consider every possible execution (go inside if/while block or not) and return a list of potential fence placements.
 fn handle_statement(
     graph: &mut Aeg,
     last_node: &mut Vec<NodeIndex>,
@@ -343,9 +326,6 @@ fn handle_statement(
             // Move the read nodes into the read node list
             read_nodes.append(&mut reads);
 
-            // Node just before we branch that's used to introduce the skip connection later on
-            let condition_or_last_node = last_node.clone();
-
             let mut thn_branch = last_node.clone();
             let mut first_thn = None;
             for stmt in thn {
@@ -383,11 +363,6 @@ fn handle_statement(
                 if !last_node.contains(node) {
                     last_node.push(*node);
                 }
-            }
-
-            // Add PO edge that skips over if block
-            if ADD_SKIP_CONNECTION {
-                last_node.extend(condition_or_last_node);
             }
 
             if first.is_some() {
@@ -740,7 +715,7 @@ mod tests {
             aeg.edge_references()
                 .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
                 .count(),
-            6 + 1 // there is an extra skip connection skipping over the if statement
+            6
         );
 
         assert_eq!(
