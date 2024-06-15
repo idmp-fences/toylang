@@ -174,7 +174,7 @@ impl AbstractEventGraph {
     }
 }
 
-pub(crate) type Aeg = DiGraph<Node, AegEdge>;
+pub type Aeg = DiGraph<Node, AegEdge>;
 
 fn create_aeg(program: &Program) -> AbstractEventGraph {
     let mut g: Aeg = DiGraph::new();

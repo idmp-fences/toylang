@@ -1,6 +1,7 @@
-use aeg::{AbstractEventGraph, AegConfig, Architecture};
+use aeg::{AbstractEventGraph, Aeg, AegConfig, Architecture, CriticalCycle};
 use clap::{Parser, Subcommand, ValueEnum};
 use interpreter::MemoryModel;
+use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 
@@ -12,6 +13,14 @@ enum ArgMemoryModel {
     /// Total store order
     #[default]
     Tso,
+}
+
+#[derive(ValueEnum, Default, Debug, Clone)]
+#[clap(rename_all = "kebab-case")]
+enum AegOutputFormat {
+    #[default]
+    Json,
+    MessagePack,
 }
 
 impl From<&ArgMemoryModel> for MemoryModel {
@@ -53,7 +62,17 @@ enum Commands {
         /// File to store AEG/Cycles
         #[arg(short, long)]
         output_file: Option<PathBuf>,
+
+        /// Output type
+        #[arg(short, long, default_value_t, value_enum)]
+        format: AegOutputFormat,
     },
+}
+
+#[derive(Serialize)]
+struct Output {
+    pub aeg: Aeg,
+    pub critical_cycles: Vec<CriticalCycle>,
 }
 
 fn main() -> std::io::Result<()> {
@@ -70,30 +89,47 @@ fn main() -> std::io::Result<()> {
             file,
             memory_model,
             output_file,
+            format,
         } => {
+            if matches!(format, AegOutputFormat::MessagePack) && output_file.is_none() {
+                panic!("--format=message-pack needs and --output-file")
+            }
+
             let source = fs::read_to_string(&file).expect("Failed to read input file!");
             let program = parser::parse(&source).unwrap();
             let architecture = match memory_model {
                 ArgMemoryModel::Sc => panic!("There are no critical cycles under SC"),
                 ArgMemoryModel::Tso => Architecture::Tso,
             };
+
             let aeg = AbstractEventGraph::with_config(&program, AegConfig { architecture });
             let ccs = aeg.find_critical_cycles();
+            let output = Output {
+                aeg: aeg.graph,
+                critical_cycles: ccs,
+            };
+
             if let Some(out) = output_file {
-                std::fs::write(
-                    out,
-                    format!(
-                        "{{\"aeg\":{},\"critical_cycles\":{}}}",
-                        serde_json::to_string(&aeg.graph).unwrap(),
-                        serde_json::to_string(&ccs).unwrap()
-                    ),
-                )
+                match format {
+                    AegOutputFormat::Json => {
+                        let json = serde_json::to_string(&output).unwrap();
+                        std::fs::write(out, json)
+                    }
+                    AegOutputFormat::MessagePack => {
+                        let mp = rmp_serde::to_vec(&output).unwrap();
+                        std::fs::write(out, mp)
+                    }
+                }
             } else {
-                println!(
-                    "{{\"aeg\":{},\"critical_cycles\":{}}}",
-                    serde_json::to_string(&aeg.graph).unwrap(),
-                    serde_json::to_string(&ccs).unwrap()
-                );
+                match format {
+                    AegOutputFormat::Json => {
+                        let json = serde_json::to_string(&output).unwrap();
+                        println!("{json}")
+                    }
+                    AegOutputFormat::MessagePack => {
+                        unreachable!("--format=message-pack needs and --output-file")
+                    }
+                }
                 Ok(())
             }
         }
