@@ -1,5 +1,6 @@
 use std::iter::from_fn;
 
+use indexmap::IndexSet;
 use petgraph::{
     algo::astar,
     graph::{DiGraph, NodeIndex},
@@ -13,8 +14,8 @@ use crate::critical_cycles::{self, Architecture, CriticalCycle};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-pub(crate) type ThreadId = String;
-pub(crate) type MemoryId = String;
+pub(crate) type ThreadId = usize;
+pub(crate) type MemoryId = usize;
 
 // todo: use `usize` to represent memory addresses
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,14 +68,12 @@ pub enum Fence {
 #[derive(Debug, Clone, Copy)]
 pub struct AegConfig {
     pub architecture: Architecture,
-    pub skip_branches: bool,
 }
 
 impl Default for AegConfig {
     fn default() -> Self {
         Self {
             architecture: Architecture::Tso,
-            skip_branches: true,
         }
     }
 }
@@ -83,21 +82,20 @@ impl Default for AegConfig {
 pub struct AbstractEventGraph {
     pub graph: Aeg,
     pub config: AegConfig,
+    // convert a thread/variable name to its internal representation
+    pub thread_map: IndexSet<String>,
+    pub var_map: IndexSet<String>,
 }
 
 impl AbstractEventGraph {
     pub fn new(program: &Program) -> Self {
-        AbstractEventGraph {
-            graph: create_aeg(program),
-            config: AegConfig::default(),
-        }
+        create_aeg(program)
     }
 
     pub fn with_config(program: &Program, config: AegConfig) -> Self {
-        AbstractEventGraph {
-            graph: create_aeg(program),
-            config,
-        }
+        let mut aeg = create_aeg(program);
+        aeg.config = config;
+        aeg
     }
 
     /// Find all neighbors of a node, taking into account transitive po edges
@@ -176,20 +174,25 @@ impl AbstractEventGraph {
     }
 }
 
-pub(crate) type Aeg = DiGraph<Node, AegEdge>;
+pub type Aeg = DiGraph<Node, AegEdge>;
 
-fn create_aeg(program: &Program) -> Aeg {
+fn create_aeg(program: &Program) -> AbstractEventGraph {
     let mut g: Aeg = DiGraph::new();
 
     // The init block is single-threaded, so none of the nodes are in the AEG.
     // All competing edges happen between threads.
+    let mut var_map = IndexSet::new();
+    var_map.extend(program.global_vars.iter().cloned());
 
     // Add the threads
     let mut thread_nodes = vec![];
+    let mut thread_map = IndexSet::new();
     for thread in &program.threads {
         let mut last_node = vec![];
         let mut read_nodes = vec![];
         let mut write_nodes = vec![];
+        thread_map.insert(thread.name.clone());
+        let thread_id = thread_map.get_index_of(&thread.name).unwrap();
         for stmt in &thread.instructions {
             handle_statement(
                 &mut g,
@@ -197,8 +200,8 @@ fn create_aeg(program: &Program) -> Aeg {
                 &mut read_nodes,
                 &mut write_nodes,
                 stmt,
-                program.global_vars.as_ref(),
-                thread.name.clone(),
+                thread_id,
+                &var_map,
             );
         }
         thread_nodes.push((write_nodes, read_nodes));
@@ -226,41 +229,31 @@ fn create_aeg(program: &Program) -> Aeg {
             }
         }
     }
-    g
+    AbstractEventGraph {
+        graph: g,
+        config: AegConfig::default(),
+        thread_map,
+        var_map,
+    }
 }
-
-const ADD_SKIP_CONNECTION: bool = true;
 
 /// Adds the corresponding nodes for a statement to the AEG and returns the index of the first nodes.
 /// Only the global read/write nodes are added to the AEG as they are the only ones that can create competing edges.
 /// The local read/write nodes are not add to the AEG as they are not relevant for the competing edge calculation.
-///
-/// # Notes
-///
-/// ## If branch skip connections
-///
-/// In the if branch, we introduce a po connection 'skipping over' the entire if block. As a result, since the critical cycles
-/// searches for the shortest path between two nodes, if a node is straddeling an if block, there will be no potential fence
-/// placements inside the if block since the shortest path takes the skip connection. This is an approximation/heuristic that
-/// could be fixed by instead having an `all-simple-paths` algorithm to look for po paths between two nodes instead. This approach
-/// would also require some rethinking of the while blocks, however.
-///
-/// The while blocks themselves already have skip connections that would be taken to skip over the while block. With an all-simple-paths
-/// approach, we would consider every possible execution (go inside if/while block or not) and return a list of potential fence placements.
 fn handle_statement(
     graph: &mut Aeg,
     last_node: &mut Vec<NodeIndex>,
     read_nodes: &mut Vec<NodeIndex>,
     write_nodes: &mut Vec<NodeIndex>,
     stmt: &Statement,
-    globals: &[String],
     thread: ThreadId,
+    var_map: &IndexSet<String>,
 ) -> Option<Vec<NodeIndex>> {
     match stmt {
         Statement::Modify(vwrite, Expr::Num(_)) | Statement::Assign(vwrite, Expr::Num(_)) => {
             // If the variable is a global, return the write node
-            if globals.contains(vwrite) {
-                let lhs: NodeIndex = graph.add_node(Node::Write(thread, vwrite.clone()));
+            if let Some(vwrite) = var_map.get_index_of(vwrite) {
+                let lhs: NodeIndex = graph.add_node(Node::Write(thread, vwrite));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, lhs);
                 *last_node = vec![lhs];
@@ -274,10 +267,11 @@ fn handle_statement(
         Statement::Modify(vwrite, Expr::Var(vread))
         | Statement::Assign(vwrite, Expr::Var(vread)) => {
             // We distinguish between 4 cases, whether both are globals, only one is a global, or none are globals
-
-            if globals.contains(vwrite) && globals.contains(vread) {
-                let lhs = graph.add_node(Node::Write(thread.clone(), vwrite.clone()));
-                let rhs = graph.add_node(Node::Read(thread, vread.clone()));
+            if let (Some(vwrite), Some(vread)) =
+                (var_map.get_index_of(vwrite), var_map.get_index_of(vread))
+            {
+                let lhs = graph.add_node(Node::Write(thread, vwrite));
+                let rhs = graph.add_node(Node::Read(thread, vread));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, lhs);
                 // Add a po edge from the rhs (read) to the lhs (write)
@@ -287,15 +281,15 @@ fn handle_statement(
                 write_nodes.push(lhs);
                 read_nodes.push(rhs);
                 Some(vec![lhs])
-            } else if globals.contains(vwrite) {
-                let lhs = graph.add_node(Node::Write(thread, vwrite.clone()));
+            } else if let Some(vwrite) = var_map.get_index_of(vwrite) {
+                let lhs = graph.add_node(Node::Write(thread, vwrite));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, lhs);
                 *last_node = vec![lhs];
                 write_nodes.push(lhs);
                 Some(vec![lhs])
-            } else if globals.contains(vread) {
-                let rhs = graph.add_node(Node::Read(thread, vread.clone()));
+            } else if let Some(vread) = var_map.get_index_of(vread) {
+                let rhs = graph.add_node(Node::Read(thread, vread));
                 // Add a po edge from the last node to the current node
                 connect_previous(graph, last_node, rhs);
                 *last_node = vec![rhs];
@@ -317,7 +311,7 @@ fn handle_statement(
         }
         Statement::If(cond, thn, els) => {
             let mut reads = vec![];
-            handle_condition(graph, &mut reads, cond, globals, thread.clone());
+            handle_condition(graph, &mut reads, cond, thread, var_map);
 
             // Add a po edge from the last node to the first read
             let mut first = None;
@@ -332,9 +326,6 @@ fn handle_statement(
             // Move the read nodes into the read node list
             read_nodes.append(&mut reads);
 
-            // Node just before we branch that's used to introduce the skip connection later on
-            let condition_or_last_node = last_node.clone();
-
             let mut thn_branch = last_node.clone();
             let mut first_thn = None;
             for stmt in thn {
@@ -344,8 +335,8 @@ fn handle_statement(
                     read_nodes,
                     write_nodes,
                     stmt,
-                    globals,
-                    thread.clone(),
+                    thread,
+                    var_map,
                 );
                 if first_thn.is_none() {
                     first_thn = f;
@@ -360,8 +351,8 @@ fn handle_statement(
                     read_nodes,
                     write_nodes,
                     stmt,
-                    globals,
-                    thread.clone(),
+                    thread,
+                    var_map,
                 );
                 if first_els.is_none() {
                     first_els = f;
@@ -372,11 +363,6 @@ fn handle_statement(
                 if !last_node.contains(node) {
                     last_node.push(*node);
                 }
-            }
-
-            // Add PO edge that skips over if block
-            if ADD_SKIP_CONNECTION {
-                last_node.extend(condition_or_last_node);
             }
 
             if first.is_some() {
@@ -392,7 +378,7 @@ fn handle_statement(
         }
         Statement::While(cond, body) => {
             let mut reads = vec![];
-            handle_condition(graph, &mut reads, cond, globals, thread.clone());
+            handle_condition(graph, &mut reads, cond, thread, var_map);
 
             // Add a po edge from the last node to the first read
             let mut first_cond = None;
@@ -418,8 +404,8 @@ fn handle_statement(
                     read_nodes,
                     write_nodes,
                     stmt,
-                    globals,
-                    thread.clone(),
+                    thread,
+                    var_map,
                 );
                 if first_body.is_none() {
                     first_body = f;
@@ -427,38 +413,13 @@ fn handle_statement(
             }
 
             // Condition contains a read
-            if let Some(f_cond) = first_cond {
-                if let Some(f_body) = first_body {
-                    // Condition duplication
+            if let Some(f) = first_cond {
+                // Add edges from the last node to the first
+                connect_previous(graph, last_node, f);
 
-                    // duplicate the condition node (run handle_condition again?)
-                    let mut reads = vec![];
-                    handle_condition(graph, &mut reads, cond, globals, thread.clone());
-
-                    // add edges from the last node of the body to condition
-                    if let Some(read) = reads.first() {
-                        connect_previous(graph, last_node, *read);
-                    }
-
-                    // add backjump edges from the last condition to the first of the body
-                    let last_read = reads.last().unwrap();
-                    for node in f_body.iter() {
-                        connect_previous(graph, &[*last_read], *node);
-                    }
-
-                    // The next node should connect to both conditions
-                    *last_node = branch;
-                    last_node.push(*last_read);
-
-                    Some(vec![f_cond])
-                } else {
-                    // Add backjump edges from the last node to the first
-                    connect_previous(graph, last_node, f_cond);
-
-                    // Next node should connect to the end of the condition
-
-                    Some(vec![f_cond])
-                }
+                // Next node should connect to the end of the condition
+                *last_node = branch;
+                Some(vec![f])
             }
             // Body contains a read or write operation
             else if let Some(f) = first_body {
@@ -492,22 +453,22 @@ fn handle_condition(
     graph: &mut Aeg,
     reads: &mut Vec<NodeIndex>,
     cond: &CondExpr,
-    globals: &[String],
     thread: ThreadId,
+    var_map: &IndexSet<String>,
 ) {
     match cond {
-        CondExpr::Neg(e) => handle_condition(graph, reads, e, globals, thread),
+        CondExpr::Neg(e) => handle_condition(graph, reads, e, thread, var_map),
         CondExpr::And(e1, e2) => {
-            handle_condition(graph, reads, e1, globals, thread.clone());
-            handle_condition(graph, reads, e2, globals, thread);
+            handle_condition(graph, reads, e1, thread, var_map);
+            handle_condition(graph, reads, e2, thread, var_map);
         }
         CondExpr::Eq(e1, e2) => {
-            handle_expression(graph, reads, e1, globals, thread.clone());
-            handle_expression(graph, reads, e2, globals, thread);
+            handle_expression(graph, reads, e1, thread, var_map);
+            handle_expression(graph, reads, e2, thread, var_map);
         }
         CondExpr::Leq(e1, e2) => {
-            handle_expression(graph, reads, e1, globals, thread.clone());
-            handle_expression(graph, reads, e2, globals, thread);
+            handle_expression(graph, reads, e1, thread, var_map);
+            handle_expression(graph, reads, e2, thread, var_map);
         }
     }
 }
@@ -516,14 +477,14 @@ fn handle_expression(
     graph: &mut Aeg,
     reads: &mut Vec<NodeIndex>,
     expr: &Expr,
-    globals: &[String],
     thread: ThreadId,
+    var_map: &IndexSet<String>,
 ) {
     match expr {
         Expr::Num(_) => (),
         Expr::Var(vread) => {
-            if globals.contains(vread) {
-                let node = graph.add_node(Node::Read(thread, vread.clone()));
+            if let Some(vread) = var_map.get_index_of(vread) {
+                let node = graph.add_node(Node::Read(thread, vread));
                 reads
                     .last()
                     .map(|i| graph.add_edge(*i, node, AegEdge::ProgramOrder));
@@ -556,7 +517,7 @@ mod tests {
             global_vars: vec!["x".to_string(), "y".to_string(), "z".to_string()],
         };
 
-        let aeg = create_aeg(&program);
+        let aeg = create_aeg(&program).graph;
         assert_eq!(aeg.node_count(), 0);
         assert_eq!(aeg.edge_count(), 0);
     }
@@ -579,7 +540,7 @@ mod tests {
         }"#;
         let program = parser::parse(program).unwrap();
 
-        let aeg = create_aeg(&program);
+        let aeg = create_aeg(&program).graph;
 
         dbg!("{:?}", Dot::with_config(&aeg, &[]));
 
@@ -649,7 +610,7 @@ mod tests {
         }"#;
         let program = parser::parse(program).unwrap();
 
-        let aeg = dbg!(create_aeg(&program));
+        let aeg = dbg!(create_aeg(&program).graph);
         assert_eq!(aeg.node_count(), 2);
         assert_eq!(aeg.edge_count(), 0);
 
@@ -667,7 +628,7 @@ mod tests {
         }"#;
         let program = parser::parse(program).unwrap();
 
-        let aeg = dbg!(create_aeg(&program));
+        let aeg = dbg!(create_aeg(&program).graph);
         assert_eq!(aeg.node_count(), 3);
         // 1 program order, 1 undirected competing edge
         assert_eq!(aeg.edge_count(), 3);
@@ -686,7 +647,7 @@ mod tests {
         }"#;
         let program = parser::parse(program).unwrap();
 
-        let aeg = dbg!(create_aeg(&program));
+        let aeg = dbg!(create_aeg(&program).graph);
         assert_eq!(aeg.node_count(), 3);
         // 1 program order
         assert_eq!(aeg.edge_count(), 1);
@@ -719,7 +680,8 @@ mod tests {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = create_aeg(&program);
+        let parsed = create_aeg(&program);
+        let aeg = &parsed.graph;
         dbg!(Dot::with_config(&aeg, &[]));
 
         assert_eq!(aeg.node_count(), 7);
@@ -728,7 +690,7 @@ mod tests {
             aeg.edge_references()
                 .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
                 .count(),
-            6 + 1 // there is an extra skip connection skipping over the if statement
+            6
         );
 
         assert_eq!(
@@ -739,7 +701,7 @@ mod tests {
         );
 
         // find the t1 nodes
-        let ([wx1, wy, wx2], [rz]) = get_nodes(&aeg, "t1", &["x", "y", "x"], &["z"]);
+        let ([wx1, wy, wx2], [rz]) = get_nodes(&parsed, "t1", &["x", "y", "x"], &["z"]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx1, wy));
@@ -767,16 +729,17 @@ mod tests {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = create_aeg(&program);
+        let parsed = create_aeg(&program);
+        let aeg = &parsed.graph;
         dbg!(Dot::with_config(&aeg, &[]));
 
-        assert_eq!(aeg.node_count(), 6);
+        assert_eq!(aeg.node_count(), 5);
 
         assert_eq!(
             aeg.edge_references()
                 .filter(|e| matches!(e.weight(), AegEdge::ProgramOrder))
                 .count(),
-            7
+            5
         );
 
         assert_eq!(
@@ -787,8 +750,7 @@ mod tests {
         );
 
         // find the t1 nodes
-        let ([wx, wy1, wy2, wz], [rx, rx_added]) =
-            get_nodes(&aeg, "t1", &["x", "y", "y", "z"], &["x", "x"]);
+        let ([wx, wy1, wy2, wz], [rx]) = get_nodes(&parsed, "t1", &["x", "y", "y", "z"], &["x"]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx, rx));
@@ -797,10 +759,7 @@ mod tests {
         assert!(aeg.contains_edge(rx, wz));
 
         assert!(aeg.contains_edge(wy1, wy2));
-        assert!(aeg.contains_edge(wy2, rx_added));
-
-        assert!(aeg.contains_edge(rx_added, wy1));
-        assert!(aeg.contains_edge(rx_added, wz));
+        assert!(aeg.contains_edge(wy2, rx));
     }
 
     #[test]
@@ -823,7 +782,8 @@ mod tests {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = create_aeg(&program);
+        let parsed = create_aeg(&program);
+        let aeg = &parsed.graph;
         dbg!(Dot::with_config(&aeg, &[]));
 
         assert_eq!(aeg.node_count(), 4);
@@ -843,7 +803,7 @@ mod tests {
         );
 
         // find the t1 nodes
-        let ([wx, wy, wz], [ry]) = get_nodes(&aeg, "t1", &["x", "y", "z"], &["y"]);
+        let ([wx, wy, wz], [ry]) = get_nodes(&parsed, "t1", &["x", "y", "z"], &["y"]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx, wy));
@@ -870,7 +830,8 @@ mod tests {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = create_aeg(&program);
+        let parsed = create_aeg(&program);
+        let aeg = &parsed.graph;
         dbg!(Dot::with_config(&aeg, &[]));
 
         assert_eq!(aeg.node_count(), 3);
@@ -883,7 +844,7 @@ mod tests {
         );
 
         // find the t1 nodes
-        let ([wx1, wx2], [rx]) = get_nodes(&aeg, "t1", &["x", "x"], &["x"]);
+        let ([wx1, wx2], [rx]) = get_nodes(&parsed, "t1", &["x", "x"], &["x"]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx1, rx));
@@ -907,7 +868,8 @@ mod tests {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = create_aeg(&program);
+        let parsed = create_aeg(&program);
+        let aeg = &parsed.graph;
         dbg!(Dot::with_config(&aeg, &[]));
 
         assert_eq!(aeg.node_count(), 2);
@@ -920,7 +882,7 @@ mod tests {
         );
 
         // find the t1 nodes
-        let ([wx1, wx2], []) = get_nodes(&aeg, "t1", &["x", "x"], &[]);
+        let ([wx1, wx2], []) = get_nodes(&parsed, "t1", &["x", "x"], &[]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(wx1, wx2));
@@ -952,7 +914,8 @@ mod tests {
 
         let program = parser::parse(program).unwrap();
 
-        let aeg = create_aeg(&program);
+        let parsed = create_aeg(&program);
+        let aeg = &parsed.graph;
         dbg!(Dot::with_config(&aeg, &[]));
 
         assert_eq!(aeg.node_count(), 6);
@@ -966,7 +929,7 @@ mod tests {
 
         // find the t1 nodes
         let ([before_while, branch_1_1st, branch_1_2nd, after_while], [branch_2_1st, branch_2_2nd]) =
-            get_nodes(&aeg, "t1", &["x", "i", "j", "z"], &["i", "j"]);
+            get_nodes(&parsed, "t1", &["x", "i", "j", "z"], &["i", "j"]);
 
         // ensure we have the correct structure
         assert!(aeg.contains_edge(before_while, after_while)); // skip connection
@@ -986,7 +949,7 @@ mod tests {
     }
 
     fn get_nodes<const N: usize, const M: usize>(
-        aeg: &Aeg,
+        aeg: &AbstractEventGraph,
         thread: &str,
         writes: &[&str; N],
         reads: &[&str; M],
@@ -994,20 +957,25 @@ mod tests {
         let mut write_nodes = vec![];
         let mut read_nodes = vec![];
 
+        let thread = aeg.thread_map.get_index_of(thread).unwrap();
+
+        let writes = writes.map(|w: &str| aeg.var_map.get_index_of(w).unwrap());
+        let reads = reads.map(|w: &str| aeg.var_map.get_index_of(w).unwrap());
+
         let mut wi = 0;
         let mut ri = 0;
-        for (id, node) in aeg.node_references() {
+        for (id, node) in aeg.graph.node_references() {
             match node {
-                Node::Write(t, addr) if t == thread => {
-                    if wi < writes.len() && writes[wi] == addr.as_str() {
+                Node::Write(t, addr) if *t == thread => {
+                    if wi < writes.len() && writes[wi] == *addr {
                         write_nodes.push(id);
                         wi += 1;
                     } else {
                         panic!()
                     }
                 }
-                Node::Read(t, addr) if t == thread => {
-                    if ri < reads.len() && reads[ri] == addr.as_str() {
+                Node::Read(t, addr) if *t == thread => {
+                    if ri < reads.len() && reads[ri] == *addr {
                         read_nodes.push(id);
                         ri += 1;
                     } else {

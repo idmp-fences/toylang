@@ -10,3 +10,5 @@ DS_Store
 Cargo.lock
 
 __pycache__/
+
+flamegraph.svg
