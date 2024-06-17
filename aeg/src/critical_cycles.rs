@@ -388,6 +388,7 @@ pub(crate) fn critical_cycles(aeg: &AbstractEventGraph) -> Vec<CriticalCycle> {
         let was_added = mc.add_node(aeg, start_node);
         debug_assert!(was_added);
         stack.push(mc);
+//         println!("{:?}", &explored);
 
         while let Some(cycle) = stack.pop() {
             let node = *cycle.last().expect("cycle is empty");

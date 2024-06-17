@@ -7,11 +7,9 @@ from ilp import ILPSolver, AbstractEventGraph, CriticalCycle
 from alns_test import *
 
 def alns_experiment(filename):
-    start_time = time.time()
-
     def initial_state(aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]) -> ProblemState:
         solver = ILPSolver(aeg, critical_cycles)
-        solver.fence_placement(0.5)  # Run the ILP solver to place initial fences
+        solver.fence_placement(0.01)  # Run the ILP solver to place initial fences
         return ProblemState(ProblemInstance(aeg, critical_cycles))
 
     with open(filename, 'r') as file:
@@ -37,30 +35,29 @@ def alns_experiment(filename):
     stop = MaxRuntime(3)  # 3 seconds; see alns.stop for others
 
     # Run the ALNS algorithm
+    start_time = time.time()
     result = alns.iterate(init_sol, select, accept, stop)
-
+    end_time = time.time()
     # Retrieve the final solution
     best = result.best_state
     best_objective = best.objective()
     print(f"Best heuristic solution objective is {best_objective}.")
-    print("AEG:", aeg)
+    # print("AEG:", aeg)
     print("Alns Experiment")
 
-    end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"ALNS experiment took {elapsed_time:.2f} seconds.")
 
     return elapsed_time, best_objective
 
 def ilp_experiment(filename):
-    start_time = time.time()
-
     with open(filename, 'r') as file:
         data = json.load(file)
     aeg_data = data["aeg"]
     ccs_data = data["critical_cycles"]
     aeg = AbstractEventGraph(aeg_data['nodes'], aeg_data['edges'])
     critical_cycles = [CriticalCycle(cc['cycle'], cc['potential_fences'], aeg) for cc in ccs_data]
+    start_time = time.time()
     fences = ILPSolver(aeg, critical_cycles).fence_placement()
     print("ILP experiment")
 

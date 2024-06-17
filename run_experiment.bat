@@ -17,7 +17,7 @@ set "TEMP_FILE=temp.csv"
 
 :: Measure time for cargo command using %time%
 set _startCargo=%time%
-cargo run -p toy find-cycles "%FILENAME%" > "%OUTPUT_FILE%"
+cargo run -r -p toy find-cycles "%FILENAME%" > "%OUTPUT_FILE%"
 set _endCargo=%time%
 
 :: Convert start and end times to milliseconds since midnight
