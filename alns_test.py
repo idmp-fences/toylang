@@ -123,7 +123,10 @@ def greedy_repair_most_cycles(destroyed: ProblemState, rnd_state: rnd.RandomStat
         for cycle_id in removed_cycles:
             for edge in destroyed.instance.critical_cycles[cycle_id].edges:
                 if edge.id in edge_cycles:
-                    del edge_cycles[edge.id]
+                    if len(edge_cycles[edge.id]) == 1:
+                        del edge_cycles[edge.id]
+                    else:
+                        edge_cycles[edge.id].remove(cycle_id)
             
         destroyed.instance.aeg.fences.append(destroyed.instance.aeg.edges[best_edge])
     return destroyed
@@ -158,8 +161,10 @@ def greedy_repair_in_degrees(destroyed: ProblemState, rnd_state: rnd.RandomState
         removed_cycles = edge_cycles[best_edge].copy()
         for cycle_id in removed_cycles:
             for edge in destroyed.instance.critical_cycles[cycle_id].edges:
-                if edge.id in edge_cycles:
-                    del edge_cycles[edge.id]
+                if len(edge_cycles[edge.id]) == 1:
+                        del edge_cycles[edge.id]
+                else:
+                    edge_cycles[edge.id].remove(cycle_id)
                  
         destroyed.instance.aeg.fences.append(destroyed.instance.aeg.edges[best_edge])
     return destroyed
@@ -181,7 +186,7 @@ if __name__ == "__main__":
     # Create ALNS and add one or more destroy and repair operators
     alns = ALNS(rnd.RandomState(seed=42))
     alns.add_destroy_operator(destroy_fences_same_cycle)
-    alns.add_repair_operator(greedy_repair_in_degrees)
+    alns.add_repair_operator(greedy_repair_most_cycles)
     # alns.add_repair_operator(repair)
 
     # Configure ALNS
