@@ -20,13 +20,11 @@ case "$MODE" in
     ILP)
         # Command for ILP
         echo "Running ILP analysis..."
-        # Replace 'your_ilp_command' with the actual command you want to run
         python3 experiment.py 1 "$OUTPUT_FILE"
         ;;
     ALNS)
         # Command for ALNS
         echo "Running ALNS analysis..."
-        # Replace 'your_alns_command' with the actual command you want to run
         python3 experiment.py 2 "$OUTPUT_FILE"
         ;;
     *)
@@ -35,3 +33,7 @@ case "$MODE" in
         exit 1
         ;;
 esac
+
+echo "Cleaning up..."
+rm "$OUTPUT_FILE"
+echo "Deleted $OUTPUT_FILE"

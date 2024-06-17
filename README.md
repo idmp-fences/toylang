@@ -72,3 +72,9 @@ To run an experiment use the command:
 ./run_experiment.sh <program_path> <ALNS|ILP>
 If the file does not have run permissions, simply tun:
 chmod +x ./run_experimens.sh
+
+To run multiple experiments and save results to a file, run:
+./run_all.sh
+If the file does not have run permissions, simply tun:
+chmod +x ./run_all.sh
+To modify the specifications of the experiments, simply modify the filenames and run_types arrays in the script
