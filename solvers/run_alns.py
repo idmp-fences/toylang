@@ -95,6 +95,8 @@ def run_alns(
     alns.on_best(lambda state, rnd_state, **kwargs: print(f"New best objective: {state.objective()} ({time.perf_counter() - load_time})"))
     result = alns.iterate(init_sol, select, accept, stop)
 
+    print(f"Total runtime: {time.perf_counter() - load_time}")
+
     # Retrieve the final solution
     best = result.best_state
     best_iter = np.where(result.statistics.objectives == best.objective())[0][0] + 1
