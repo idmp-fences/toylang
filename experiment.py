@@ -1,7 +1,8 @@
 import sys
 import json
-from ilp import ILPSolver, AbstractEventGraph, CriticalCycle
-from alns_test import *
+from solvers.aeg import AbstractEventGraph, CriticalCycle
+from solvers.run_ilp import ILPSolver
+from solvers.run_alns import *
 
 def alns_experiment(filename):
     def initial_state(aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]) -> ProblemState:
