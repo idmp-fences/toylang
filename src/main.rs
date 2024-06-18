@@ -92,7 +92,7 @@ fn main() -> std::io::Result<()> {
             format,
         } => {
             if matches!(format, AegOutputFormat::MessagePack) && output_file.is_none() {
-                panic!("--format=message-pack needs and --output-file")
+                panic!("--format=message-pack needs an --output-file")
             }
 
             let source = fs::read_to_string(&file).expect("Failed to read input file!");
@@ -113,11 +113,11 @@ fn main() -> std::io::Result<()> {
                 match format {
                     AegOutputFormat::Json => {
                         let json = serde_json::to_string(&output).unwrap();
-                        std::fs::write(out, json)
+                        fs::write(out, json)
                     }
                     AegOutputFormat::MessagePack => {
-                        let mp = rmp_serde::to_vec(&output).unwrap();
-                        std::fs::write(out, mp)
+                        let mp = rmp_serde::to_vec_named(&output).unwrap();
+                        fs::write(out, mp)
                     }
                 }
             } else {
@@ -127,7 +127,7 @@ fn main() -> std::io::Result<()> {
                         println!("{json}")
                     }
                     AegOutputFormat::MessagePack => {
-                        unreachable!("--format=message-pack needs and --output-file")
+                        unreachable!("--format=message-pack needs an --output-file")
                     }
                 }
                 Ok(())

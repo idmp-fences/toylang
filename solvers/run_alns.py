@@ -1,26 +1,23 @@
-import json
+import argparse
 import time
-from typing import Optional
-import matplotlib.pyplot as plt
+from typing import Literal, Optional
 
+import matplotlib.pyplot as plt
+import numpy as np
 from alns import ALNS
 from alns.accept import HillClimbing, SimulatedAnnealing
 from alns.select import RandomSelect, RouletteWheel
 from alns.stop import MaxRuntime
 
-from repair_ops import *
 from destroy_ops import *
 from initial_state_gen import *
-
-import numpy.random as rnd
-import numpy as np
-
+from repair_ops import *
 from aeg import AbstractEventGraph, CriticalCycle
-import argparse
+from util import load_aeg
 
 
 class UntilObjective:
-    def __init__(self, min_objective: float, max_runtime: Optional[float]=None):
+    def __init__(self, min_objective: float, max_runtime: Optional[float] = None):
         if max_runtime is not None and max_runtime < 0:
             raise ValueError("max_runtime < 0 not understood.")
 
@@ -40,36 +37,24 @@ class UntilObjective:
 
         return time.perf_counter() - self._start_runtime > self.max_runtime
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ALNS Configuration")
-    parser.add_argument("file_path", help="Path to the JSON file to load")
-    parser.add_argument("--initial-state-gen", choices=["hot-edges", "first-edges", "ilp"], default="hot-edges", help="Initial state generation method")
-    parser.add_argument("--select", choices=["random", "roulette-wheel", "roulette-wheel-segmented"], default="random", help="Select method")
-    parser.add_argument("--accept", choices=["hill-climbing", "late-acceptance-hill-climbing", "simulated-annealing"], default="hill-climbing", help="Accept method")
-    parser.add_argument("--max-runtime", type=int, default=60, help="Max runtime of ALNS")
-    parser.add_argument("--until-objective", type=int, default=None, help="Run ALNS until this objective is reached")
 
-    args = parser.parse_args()
-
-    if args.file_path.endswith(".json"):
-        with open(args.file_path, "r") as file:
-            input_json = json.load(file)
-        aeg_data = input_json["aeg"]
-        ccs_data = input_json["critical_cycles"]
-    else:
-        raise ValueError("Cannot parse this file type")
-
+def run_alns(
+        aeg: AbstractEventGraph,
+        critical_cycles: List[CriticalCycle],
+        initial_state_gen: Literal["hot-edges", "first-edges", "ilp"] = "hot-edges",
+        select: Literal["random", "roulette-wheel", "roulette-wheel-segmented"] = "random",
+        accept: Literal["hill-climbing", "late-acceptance-hill-climbing", "simulated-annealing"] = "hill-climbing",
+        max_runtime: int = 60,
+        until_objective: int = None
+):
     load_time = time.perf_counter()
-
-    aeg = AbstractEventGraph(aeg_data['nodes'], aeg_data['edges'])
-    critical_cycles = [CriticalCycle(cc['cycle'], cc['potential_fences'], aeg) for cc in ccs_data]
 
     # Create the initial solution
     initial_state_gen = {
         "hot-edges": initial_state_hot_edges,
         "first-edges": initial_state_first_edges,
         "ilp": initial_state_ilp
-    }[args.initial_state_gen]  
+    }[initial_state_gen]
 
     init_sol = initial_state_gen(aeg, critical_cycles)
 
@@ -81,7 +66,7 @@ if __name__ == "__main__":
     alns = ALNS(rnd.RandomState(seed=42))
 
     destroy_ops = [destroy_cold_fences, destroy_fences_same_cycle, destroy_hot_fences, destroy_random_10, destroy_random_30, destroy_biggest_cycle]
-    repair_ops = [repair_unbroken_cycles_randomly, repair_hot_fences]#, greedy_repair_in_degrees, greedy_repair_most_cycles] 
+    repair_ops = [repair_unbroken_cycles_randomly, repair_hot_fences]#, greedy_repair_in_degrees, greedy_repair_most_cycles]
 
     for destroy in destroy_ops:
         alns.add_destroy_operator(destroy)
@@ -93,19 +78,18 @@ if __name__ == "__main__":
         "random": RandomSelect(num_destroy=len(destroy_ops), num_repair=len(repair_ops)),
         "roulette-wheel": RouletteWheel([3, 2, 1, 0.5], 0.8, num_destroy=len(destroy_ops), num_repair=len(repair_ops)),
         # "roulette-wheel-segmented": RouletteWheelSegmented
-    }[args.select]
+    }[select]
 
     accept = {
         "hill-climbing": HillClimbing(),
         # "late-acceptance-hill-climbing": LateAcceptanceHillClimbing,
         "simulated-annealing": SimulatedAnnealing(start_temperature=500, end_temperature=1, step=0.95)
-    }[args.accept]
+    }[accept]
 
-    if args.until_objective is not None:
-        stop = UntilObjective(args.until_objective, args.max_runtime)
+    if until_objective is not None:
+        stop = UntilObjective(until_objective, max_runtime)
     else:
-        stop = MaxRuntime(args.max_runtime)
-    
+        stop = MaxRuntime(max_runtime)
 
     # Run the ALNS algorithm
     alns.on_best(lambda state, rnd_state, **kwargs: print(f"New best objective: {state.objective()} ({time.perf_counter() - load_time})"))
@@ -123,3 +107,18 @@ if __name__ == "__main__":
     _, ax = plt.subplots(figsize=(12, 6))
     result.plot_objectives(ax, "Objective values")
     plt.show()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="ALNS Configuration")
+    parser.add_argument("file_path", help="Path to the JSON or MSGPACK file to load")
+    parser.add_argument("--initial-state-gen", choices=["hot-edges", "first-edges", "ilp"], default="hot-edges", help="Initial state generation method")
+    parser.add_argument("--select", choices=["random", "roulette-wheel", "roulette-wheel-segmented"], default="random", help="Select method")
+    parser.add_argument("--accept", choices=["hill-climbing", "late-acceptance-hill-climbing", "simulated-annealing"], default="hill-climbing", help="Accept method")
+    parser.add_argument("--max-runtime", type=int, default=60, help="Max runtime of ALNS")
+    parser.add_argument("--until-objective", type=int, default=None, help="Run ALNS until this objective is reached")
+
+    args = parser.parse_args()
+
+    aeg, critical_cycles = load_aeg(args.file_path)
+    run_alns(aeg, critical_cycles, args.initial_state_gen, args.select, args.accept, args.max_runtime, args.until_objective)

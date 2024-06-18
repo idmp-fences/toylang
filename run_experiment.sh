@@ -20,12 +20,12 @@ case "$MODE" in
     ILP)
         # Command for ILP
         echo "Running ILP analysis..."
-        python3 experiment.py 1 "$OUTPUT_FILE"
+        python3 solvers/run_ilp.py "$OUTPUT_FILE"
         ;;
     ALNS)
         # Command for ALNS
         echo "Running ALNS analysis..."
-        python3 experiment.py 2 "$OUTPUT_FILE"
+        python3 solvers/run_alns.py "$OUTPUT_FILE"
         ;;
     *)
         echo "Invalid mode: $MODE"
