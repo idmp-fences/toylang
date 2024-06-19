@@ -1,4 +1,5 @@
 from typing import List
+
 from aeg import AbstractEventGraph, CriticalCycle, Edge
 
 
@@ -24,6 +25,7 @@ class ProblemInstance:
 
         # All of the potential fence placements combined
         self.potential_fences = set(self.edge_cc_count.keys())
+
 
 class ProblemState:
     """

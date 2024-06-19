@@ -68,6 +68,11 @@ cargo clippy -- -W clippy::pedantic
 ```
 
 ## Experiments
+First set up a local python environment by running:
+```
+pipenv install
+```
+
 To run an experiment use the command:
 ./run_experiment.sh <program_path> <ALNS|ILP>
 If the file does not have run permissions, simply tun:

@@ -1,6 +1,5 @@
-
-
 from typing import List
+
 from alns_instance import ProblemInstance, ProblemState
 from aeg import AbstractEventGraph, CriticalCycle
 from run_ilp import ILPSolver
@@ -14,6 +13,7 @@ def initial_state_ilp(aeg: AbstractEventGraph, critical_cycles: List[CriticalCyc
     solver.fence_placement(0.5)  # Run the ILP solver to place initial fences
 
     return ProblemState(ProblemInstance(aeg, critical_cycles))
+
 
 # Place a fence on the first edge of every critical cycle
 def initial_state_hot_edges(aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]) -> ProblemState:
@@ -32,6 +32,7 @@ def initial_state_hot_edges(aeg: AbstractEventGraph, critical_cycles: List[Criti
     state.fences = list(unique_edges)    
 
     return state
+
 
 def initial_state_first_edges(aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]) -> ProblemState:
     """

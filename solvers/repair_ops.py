@@ -1,5 +1,6 @@
-from alns_instance import ProblemState
 import numpy.random as rnd
+
+from alns_instance import ProblemState
 from run_ilp import ILPSolver
 
 

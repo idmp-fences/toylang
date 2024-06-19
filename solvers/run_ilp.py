@@ -1,16 +1,17 @@
-import json
+import argparse
 from typing import List
-import msgpack
+
 import pulp
 
 from aeg import AbstractEventGraph, CriticalCycle, Edge
+from util import load_aeg
 
 
 class ILPSolver:
-    def __init__(self, aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle], fences: List[Edge]=[]):
+    def __init__(self, aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle], fences: List[Edge] = None):
         self.aeg = aeg
         self.critical_cycles = critical_cycles
-        self.fences = fences
+        self.fences: List[Edge] = fences or []
 
     def fence_placement(self, time_limit=None):
         # Initialize the ILP problem
@@ -42,21 +43,18 @@ class ILPSolver:
         self.fences = list(edge for edge in fences if int(pulp.value(fences[edge])) == 1)
         return self.fences
 
-def run_ilp():
-    with open('./programs/cycles/lamport-4.json', 'rb') as file:
-        input_json = json.load(file)
-    print("file loaded")
-    aeg_data = input_json["aeg"]
-    ccs_data = input_json["critical_cycles"]
 
-    aeg = AbstractEventGraph(aeg_data['nodes'], aeg_data['edges'])
-    critical_cycles = [CriticalCycle(cc['cycle'], cc['potential_fences'], aeg) for cc in ccs_data]
-
-    print("starting solver")
-
+def run_ilp(aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]):
+    print("Starting ILP solver")
     fences = ILPSolver(aeg, critical_cycles).fence_placement()
-
     print("AEG:", fences)
 
+
 if __name__ == "__main__":
-    run_ilp()
+    parser = argparse.ArgumentParser(description="ILP Configuration")
+    parser.add_argument("file_path", help="Path to the JSON or MSGPACK file to load")
+
+    args = parser.parse_args()
+
+    aeg, critical_cycles = load_aeg(args.file_path)
+    run_ilp(aeg, critical_cycles)
