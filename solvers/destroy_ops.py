@@ -3,7 +3,7 @@ import numpy.random as rnd
 
 from alns_instance import ProblemState
 
-
+import time
 def destroy_random_30(state: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     # Copy the current state to avoid modifying the original state
     next_state = state.copy()

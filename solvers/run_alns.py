@@ -48,7 +48,7 @@ def run_alns(
         until_objective: Optional[int] = None,
         verbose: bool = False
 ):
-    load_time = time.perf_counter()
+    start_time = time.perf_counter()
 
     # Create the initial solution
     initial_state_gen = {
@@ -61,18 +61,16 @@ def run_alns(
     
     stats = []
 
-    init_time = time.perf_counter()
-
-    stats.append((init_sol.objective(), init_time - load_time))
+    stats.append((init_sol.objective(), time.perf_counter() - start_time))
 
     if verbose:
-        print(f"Initial solution objective is {init_sol.objective()} ({init_time - load_time})")
+        print(f"Initial solution objective is {init_sol.objective()} ({time.perf_counter() - start_time})")
 
     # Create ALNS and add one or more destroy and repair operators
     alns = ALNS(rnd.RandomState())
 
     destroy_ops = [destroy_cold_fences, destroy_fences_same_cycle, destroy_hot_fences, destroy_random_10, destroy_random_30, destroy_biggest_cycle]
-    repair_ops = [repair_unbroken_cycles_randomly, repair_hot_fences, greedy_repair_in_degrees, greedy_repair_most_cycles, ilp_repair_partial]
+    repair_ops = [ilp_repair_full] # ilp_repair_partial,  repair_hot_fences, repair_unbroken_cycles_randomly, greedy_repair_in_degrees, greedy_repair_most_cycles, 
 
     for destroy in destroy_ops:
         alns.add_destroy_operator(destroy)
@@ -105,12 +103,12 @@ def run_alns(
 
     # Run the ALNS algorithm
     alns.on_best(lambda state, rnd_state, **kwargs: 
-        new_best(state.objective(), time.perf_counter() - load_time)
+        new_best(state.objective(), time.perf_counter() - start_time)
     )
     result = alns.iterate(init_sol, select, accept, stop)
 
     if verbose:
-        print(f"Total runtime: {time.perf_counter() - load_time}")
+        print(f"Total runtime: {time.perf_counter() - start_time}")
 
     # Retrieve the final solution
     best: ProblemState = result.best_state
@@ -130,6 +128,8 @@ def run_alns(
         print(meta)
     
     print(" ".join([f"({a} {b:.3f})" for a, b in stats]))
+    # print(dict(result.statistics.destroy_operator_counts))
+    # print(dict(result.statistics.repair_operator_counts))
 
     # Plot operator & objective info
     if verbose:

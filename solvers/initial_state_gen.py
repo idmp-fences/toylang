@@ -10,10 +10,11 @@ def initial_state_ilp(aeg: AbstractEventGraph, critical_cycles: List[CriticalCyc
     Run the ILP solver to generate an initial good state
     """
     solver = ILPSolver(aeg, critical_cycles)
-    solver.fence_placement(0.5)  # Run the ILP solver to place initial fences
+    fences, obj = solver.fence_placement(max_solutions=1, verbose=False)  # Run the ILP solver to place initial fences
+    state = ProblemState(ProblemInstance(aeg, critical_cycles))
+    state.fences = fences
 
-    return ProblemState(ProblemInstance(aeg, critical_cycles))
-
+    return state
 
 # Place a fence on the first edge of every critical cycle
 def initial_state_hot_edges(aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]) -> ProblemState:
@@ -21,7 +22,6 @@ def initial_state_hot_edges(aeg: AbstractEventGraph, critical_cycles: List[Criti
     Generate an initial state by place an edge on each cycle's hottest fence
     """
     instance = ProblemInstance(aeg, critical_cycles)
-    instance.edge_cc_count
     
     unique_edges = set()
     for cc in critical_cycles:

@@ -1,3 +1,5 @@
+import time
+import numpy as np
 import numpy.random as rnd
 
 from alns_instance import ProblemState
@@ -15,27 +17,24 @@ def ilp_repair_partial(state: ProblemState, rnd_state: rnd.RandomState) -> Probl
     state.fences.extend(fences)
     return state
 
-
 def ilp_repair_full(state: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     def is_broken(cycle: CriticalCycle):
         return any([edge in state.fences for edge in cycle.edges])
     unbroken_cycles = list(filter(lambda cc: not is_broken(cc),state.instance.critical_cycles))
     
-    solver = ILPSolver(state.instance.aeg, unbroken_cycles) 
-    fences, obj = solver.fence_placement()  # Run the ILP solver to place initial fences
+    solver = ILPSolver(state.instance.aeg, unbroken_cycles)
+    fences, obj = solver.fence_placement(verbose=False)  # Run the ILP solver to place initial fences
     state.fences.extend(fences)
     return state
 
-# Randomly place fences on an unbroken cycle
+# Randomly place a fence on every unbroken cycle
 def repair_unbroken_cycles_randomly(state: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
-    fenced_edges = state.fences
-
     # greedily place edges on unbroken critical cycles
     for cycle in state.instance.critical_cycles:
         potential_edges = cycle.edges
         
         # if this critical cylce is not fenced
-        if sum([1 for edge in potential_edges if edge in fenced_edges ]) == 0:
+        if sum([1 for edge in potential_edges if edge in state.fences ]) == 0:
             # place a fence (randomly)
             idx = rnd_state.randint(0, len(potential_edges))
             edge = potential_edges[idx]
@@ -43,19 +42,28 @@ def repair_unbroken_cycles_randomly(state: ProblemState, rnd_state: rnd.RandomSt
 
     return state
 
-# Repair by placing fences on the hottest edge of a cycle
-# TODO: uniform distribution
+# Repair by placing fences on the hottest edge of a cycle. 
+# The edge chosen for a given cycle is random, but weighted by it's "hotness".
 def repair_hot_fences(state: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
-    fenced_edges = state.fences
-
     # greedily place edges on unbroken critical cycles
+    fences = set(state.fences)
+
     for cycle in state.instance.critical_cycles:
         
         # if this critical cylce is not fenced
-        if sum([1 for edge in cycle.edges if edge in fenced_edges ]) == 0:
+        if not any(map(lambda e: e in fences, cycle.edges)):
+
+            fence_hotness = np.array(list(map(lambda edge: state.instance.edge_cc_count[edge], state.fences)))
+            t = float(sum(fence_hotness))
+            probabilities = fence_hotness / t
+
+            # weigh fences by probability
+            best_edge = list(rnd_state.choice(state.fences, 1, p=probabilities))[0]
+
             # place a fence on the best edge
-            best_edge = max(cycle.edges, key=lambda e: state.instance.edge_cc_count[e])
+            # best_edge = max(cycle.edges, key=lambda e: state.instance.edge_cc_count[e])
             state.fences.append(best_edge)
+            fences.add(best_edge)
 
     return state
 
