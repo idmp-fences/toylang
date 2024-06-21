@@ -12,3 +12,7 @@ Cargo.lock
 __pycache__/
 
 flamegraph.svg
+
+programs/random
+
+*.msgpack
