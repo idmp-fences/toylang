@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
-import pulp
-
+import gurobipy as gp
+from gurobipy import GRB
 
 class Node:
     def __init__(self, id: int, node_type: str, thread: str, variable: str):
@@ -12,7 +12,6 @@ class Node:
     def __repr__(self):
         return f"Node(id={self.id}, type={self.node_type}, thread={self.thread}, variable={self.variable})"
 
-
 class Edge:
     def __init__(self, id: int, source: int, target: int, edge_type: str):
         self.id = id
@@ -22,7 +21,6 @@ class Edge:
 
     def __repr__(self):
         return f"Edge(id={self.id}, source={self.source}, target={self.target}, type={self.edge_type})"
-
 
 class AbstractEventGraph:
     def __init__(self, nodes: List[Dict[str, List[str]]], edges: List[List[Any]]):
@@ -38,7 +36,6 @@ class AbstractEventGraph:
     def __repr__(self):
         return f"AbstractEventGraph(nodes={self.nodes}, edges={self.edges}, fences={self.fences})"
 
-
 class CriticalCycle:
     def __init__(self, node_ids: List[int], edge_ids: List[int], aeg: AbstractEventGraph):
         self.nodes = [aeg.nodes[node_id] for node_id in node_ids]
@@ -47,38 +44,46 @@ class CriticalCycle:
     def __repr__(self):
         return f"CriticalCycle(nodes={self.nodes}, edges={self.edges})"
 
-
 class ILPSolver:
     def __init__(self, aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]):
         self.aeg = aeg
         self.critical_cycles = critical_cycles
+        self.incumbent_objective_values = []
+
+    def capture_incumbent_solution(self, model, where):
+        if where == GRB.Callback.MIPSOL:
+            incumbent_value = model.cbGet(GRB.Callback.MIPSOL_OBJ)
+            self.incumbent_objective_values.append(incumbent_value)
 
     def fence_placement(self, time_limit=None):
-        # Initialize the ILP problem
-        prob = pulp.LpProblem("TSOFencePlacement", pulp.LpMinimize)
+        # Initialize the Gurobi model
+        model = gp.Model("TSOFencePlacement")
 
         # Set of possible fences
         possible_fences = {edge for cycle in self.critical_cycles for edge in cycle.edges}
 
         # Define the decision variables for each unique edge
-        fences = {edge: pulp.LpVariable(f'f_{edge.id}', cat='Binary') for edge in possible_fences}
+        fences = {edge: model.addVar(vtype=GRB.BINARY, name=f'f_{edge.id}') for edge in possible_fences}
 
         # Objective function: Minimize the number of fences
-        prob += pulp.lpSum(fences[edge] for edge in fences), "MinimizeFences"
+        model.setObjective(gp.quicksum(fences[edge] for edge in fences), GRB.MINIMIZE)
 
         # Constraints: Ensure each critical cycle is broken
         for i, cycle in enumerate(self.critical_cycles):
-            prob += pulp.lpSum(fences[edge] for edge in cycle.edges) >= 1, f"BreakCriticalCycle_{i}"
+            model.addConstr(gp.quicksum(fences[edge] for edge in cycle.edges) >= 1, f"BreakCriticalCycle_{i}")
 
         # Already Placed Fences
-        prob += pulp.lpSum(fences[edge] for edge in self.aeg.fences) >= len(self.aeg.fences)
+        model.addConstr(gp.quicksum(fences[edge] for edge in self.aeg.fences) >= len(self.aeg.fences))
 
-        # Solver options
-        solver = pulp.PULP_CBC_CMD(timeLimit=time_limit)
+        # Set parameters
+        # if time_limit:
+        #     model.setParam(GRB.Param.TimeLimit, time_limit)
 
-        # Solve the problem
-        prob.solve(solver)
+        model.setParam(GRB.Param.SolutionLimit, 1)
+
+        # Set callback for capturing incumbent solutions
+        model.optimize(self.capture_incumbent_solution)
 
         # Update the aeg
-        self.aeg.fences = list(edge for edge in fences if int(pulp.value(fences[edge])) == 1)
+        self.aeg.fences = [edge for edge in fences if int(fences[edge].x) == 1]
         return self.aeg.fences

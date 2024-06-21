@@ -45,7 +45,7 @@ class ProblemState:
 
 def initial_state(aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]) -> ProblemState:
     solver = ILPSolver(aeg, critical_cycles)
-    solver.fence_placement(0.01)  # Run the ILP solver to place initial fences
+    solver.fence_placement(0.1)  # Run the ILP solver to place initial fences
 
     return ProblemState(ProblemInstance(aeg, critical_cycles))
 
@@ -70,7 +70,7 @@ def destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
 
 def repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     solver = ILPSolver(destroyed.instance.aeg, destroyed.instance.critical_cycles)
-    solver.fence_placement(0.01)  # Run the ILP solver to place initial fences
+    solver.fence_placement(0.1)  # Run the ILP solver to place initial fences
 
     return destroyed
 

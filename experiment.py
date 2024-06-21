@@ -9,7 +9,7 @@ from alns_test import *
 def alns_experiment(filename):
     def initial_state(aeg: AbstractEventGraph, critical_cycles: List[CriticalCycle]) -> ProblemState:
         solver = ILPSolver(aeg, critical_cycles)
-        solver.fence_placement(0.01)  # Run the ILP solver to place initial fences
+        solver.fence_placement(0.1)  # Run the ILP solver to place initial fences
         return ProblemState(ProblemInstance(aeg, critical_cycles))
 
     with open(filename, 'r') as file:
@@ -58,8 +58,10 @@ def ilp_experiment(filename):
     aeg = AbstractEventGraph(aeg_data['nodes'], aeg_data['edges'])
     critical_cycles = [CriticalCycle(cc['cycle'], cc['potential_fences'], aeg) for cc in ccs_data]
     start_time = time.time()
-    fences = ILPSolver(aeg, critical_cycles).fence_placement()
+    solver = ILPSolver(aeg, critical_cycles)
+    fences = solver.fence_placement()
     print("ILP experiment")
+    print("Incumbent objective values captured:", solver.incumbent_objective_values)
 
     end_time = time.time()
     elapsed_time = end_time - start_time
