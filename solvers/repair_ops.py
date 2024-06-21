@@ -2,17 +2,28 @@ import numpy.random as rnd
 
 from alns_instance import ProblemState
 from run_ilp import ILPSolver
+from aeg import CriticalCycle
 
 
 def ilp_repair_partial(state: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
-    solver = ILPSolver(state.instance.aeg, state.instance.critical_cycles, fences=state.fences)
-    solver.fence_placement(0.5)  # Run the ILP solver to place initial fences
+    def is_broken(cycle: CriticalCycle):
+        return any([edge in state.fences for edge in cycle.edges])
+    unbroken_cycles = list(filter(lambda cc: not is_broken(cc),state.instance.critical_cycles))
+    
+    solver = ILPSolver(state.instance.aeg, unbroken_cycles)
+    fences, obj = solver.fence_placement(max_solutions=1, verbose=False)  # Run the ILP solver to place initial fences
+    state.fences.extend(fences)
     return state
 
 
 def ilp_repair_full(state: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
-    solver = ILPSolver(state.instance.aeg, state.instance.critical_cycles, fences=state.fences)
-    solver.fence_placement()  # Run the ILP solver to place initial fences
+    def is_broken(cycle: CriticalCycle):
+        return any([edge in state.fences for edge in cycle.edges])
+    unbroken_cycles = list(filter(lambda cc: not is_broken(cc),state.instance.critical_cycles))
+    
+    solver = ILPSolver(state.instance.aeg, unbroken_cycles) 
+    fences, obj = solver.fence_placement()  # Run the ILP solver to place initial fences
+    state.fences.extend(fences)
     return state
 
 # Randomly place fences on an unbroken cycle

@@ -1,3 +1,4 @@
+import numpy as np
 import numpy.random as rnd
 
 from alns_instance import ProblemState
@@ -90,8 +91,12 @@ def destroy_hot_fences(state: ProblemState, rnd_state: rnd.RandomState) -> Probl
 
     num_to_destroy = max(1, int(destroy_pct * len(next_state.fences)))
 
-    next_state.fences.sort(key=lambda edge: next_state.instance.edge_cc_count[edge], reverse=True)
-    next_state.fences = next_state.fences[num_to_destroy:]
+    fence_hotness = np.array(list(map(lambda edge: next_state.instance.edge_cc_count[edge], next_state.fences)))
+    t = float(sum(fence_hotness))
+    probabilities = fence_hotness / t
+
+    # weigh fences by probability
+    next_state.fences = list(rnd_state.choice(next_state.fences, num_to_destroy, replace=False, p=probabilities))
 
     return next_state
 
@@ -103,7 +108,12 @@ def destroy_cold_fences(state: ProblemState, rnd_state: rnd.RandomState) -> Prob
 
     num_to_destroy = max(1, int(destroy_pct * len(next_state.fences)))
 
-    next_state.fences.sort(key=lambda edge: next_state.instance.edge_cc_count[edge])
-    next_state.fences = next_state.fences[num_to_destroy:]
+    fence_coldness = np.array(list(map(lambda edge: 1./next_state.instance.edge_cc_count[edge], next_state.fences)))
+    t = float(sum(fence_coldness))
+
+    probabilities = fence_coldness / t
+
+    # weigh fences by probability
+    next_state.fences = list(rnd_state.choice(next_state.fences, num_to_destroy, replace=False, p=probabilities))
 
     return next_state
