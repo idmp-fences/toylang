@@ -1,0 +1,18 @@
+let level0: u32 = 0;
+let level1: u32 = 0;
+let lastToEnter0: u32 = 0;
+
+thread t0 {
+    level0 = 0;
+    lastToEnter0 = i;
+    while ((lastToEnter0 == 0) && (!(!(0 <= level1)))) {}
+}
+
+thread t1 {
+    level1 = 0;
+    lastToEnter0 = i;
+    while ((lastToEnter0 == 1) && (!(!(0 <= level0)))) {}
+}
+
+final {
+}

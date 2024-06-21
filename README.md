@@ -23,7 +23,7 @@ The full grammar can be found at [parser/src/toy.pest](parser/src/toy.pest).
 
 ## Build 
 
-For a more optimized executable, run the following build command with the environment variable `RUSTFLAGS="-C target-cpu=native"`:
+For a more optimized executable, run the following build command with the environment variable `RUSTFLAGS="-C target-cpu=native"` (done by default in `.cargo/config.toml`):
 
 ```
 cargo build --release -p toy
@@ -68,6 +68,11 @@ cargo clippy -- -W clippy::pedantic
 ```
 
 ## Experiments
+First set up a local python environment by running:
+```
+pipenv install
+```
+
 To run an experiment use the command:
 ./run_experiment.sh <program_path> <ALNS|ILP>
 If the file does not have run permissions, simply tun:

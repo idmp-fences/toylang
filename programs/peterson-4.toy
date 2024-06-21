@@ -1,0 +1,58 @@
+let level0: u32 = 0;
+let level1: u32 = 0;
+let level2: u32 = 0;
+let level3: u32 = 0;
+let lastToEnter0: u32 = 0;
+let lastToEnter1: u32 = 0;
+let lastToEnter2: u32 = 0;
+
+thread t0 {
+    level0 = 0;
+    lastToEnter0 = i;
+    while ((lastToEnter0 == 0) && (!(((!(0 <= level1)) && (!(0 <= level2))) && (!(0 <= level3))))) {}
+    level0 = 1;
+    lastToEnter1 = i;
+    while ((lastToEnter1 == 0) && (!(((!(1 <= level1)) && (!(1 <= level2))) && (!(1 <= level3))))) {}
+    level0 = 2;
+    lastToEnter2 = i;
+    while ((lastToEnter2 == 0) && (!(((!(2 <= level1)) && (!(2 <= level2))) && (!(2 <= level3))))) {}
+}
+
+thread t1 {
+    level1 = 0;
+    lastToEnter0 = i;
+    while ((lastToEnter0 == 1) && (!(((!(0 <= level0)) && (!(0 <= level2))) && (!(0 <= level3))))) {}
+    level1 = 1;
+    lastToEnter1 = i;
+    while ((lastToEnter1 == 1) && (!(((!(1 <= level0)) && (!(1 <= level2))) && (!(1 <= level3))))) {}
+    level1 = 2;
+    lastToEnter2 = i;
+    while ((lastToEnter2 == 1) && (!(((!(2 <= level0)) && (!(2 <= level2))) && (!(2 <= level3))))) {}
+}
+
+thread t2 {
+    level2 = 0;
+    lastToEnter0 = i;
+    while ((lastToEnter0 == 2) && (!(((!(0 <= level0)) && (!(0 <= level1))) && (!(0 <= level3))))) {}
+    level2 = 1;
+    lastToEnter1 = i;
+    while ((lastToEnter1 == 2) && (!(((!(1 <= level0)) && (!(1 <= level1))) && (!(1 <= level3))))) {}
+    level2 = 2;
+    lastToEnter2 = i;
+    while ((lastToEnter2 == 2) && (!(((!(2 <= level0)) && (!(2 <= level1))) && (!(2 <= level3))))) {}
+}
+
+thread t3 {
+    level3 = 0;
+    lastToEnter0 = i;
+    while ((lastToEnter0 == 3) && (!(((!(0 <= level0)) && (!(0 <= level1))) && (!(0 <= level2))))) {}
+    level3 = 1;
+    lastToEnter1 = i;
+    while ((lastToEnter1 == 3) && (!(((!(1 <= level0)) && (!(1 <= level1))) && (!(1 <= level2))))) {}
+    level3 = 2;
+    lastToEnter2 = i;
+    while ((lastToEnter2 == 3) && (!(((!(2 <= level0)) && (!(2 <= level1))) && (!(2 <= level2))))) {}
+}
+
+final {
+}

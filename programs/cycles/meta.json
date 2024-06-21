@@ -1,0 +1,37 @@
+{
+    "lamport-4": {
+        "nodes": 64,
+        "edges": 460,
+        "cycles": 213420,
+        "potential-fence-placements": 64,
+        "min-fences": 16
+    },
+    "lamport-5": {
+        "nodes": 85,
+        "edges": 735,
+        "cycles": 9406476,
+        "potential-fence-placements": 85,
+        "min-fences": null
+    },
+    "peterson-2": {
+        "nodes": 8,
+        "edges": 18,
+        "cycles": 5,
+        "potential-fence-placements": 6,
+        "min-fences": 2
+    },
+    "peterson-3": {
+        "nodes": 30,
+        "edges": 117,
+        "cycles": 637,
+        "potential-fence-placements": 27,
+        "min-fences": 6
+    },
+    "peterson-4": {
+        "nodes": 72,
+        "edges": 404,
+        "cycles": 128218,
+        "potential-fence-placements": 68,
+        "min-fences": 12
+    }
+}
