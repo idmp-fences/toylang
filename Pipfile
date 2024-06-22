@@ -8,6 +8,7 @@ matplotlib = "*"
 numpy = "*"
 alns = "*"
 pulp = "*"
+gurobipy = "*"
 msgpack = "*"
 
 [dev-packages]
