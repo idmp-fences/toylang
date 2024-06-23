@@ -68,18 +68,42 @@ cargo clippy -- -W clippy::pedantic
 ```
 
 ## Experiments
+
 First set up a local python environment by running:
 ```
 pipenv install
 ```
 
+### Critical cycle benchmarking 
+
+After building the `toy` executable, one option is to use `hyperfine` command line utility to measure performance of critical cycle detection, for example:
+
+```
+hyperfine -P i 0 50 ".\target\release\toy.exe find-cycles .\programs\random-2-10-2-depth-4\random-2-10-2-{i}.toy -o .\programs\cycles\temp.msgpack -f=message-pack" --export-csv timings.csv --min-runs 3
+```
+
+### ALNS & ILP Benchmarking
+
 To run an experiment use the command:
+
+```
 ./run_experiment.sh <program_path> <ALNS|ILP>
+```
+
 If the file does not have run permissions, simply tun:
+
+```
 chmod +x ./run_experimens.sh
+```
 
 To run multiple experiments and save results to a file, run:
+```
 ./run_all.sh
+```
+
 If the file does not have run permissions, simply tun:
+```
 chmod +x ./run_all.sh
+```
+
 To modify the specifications of the experiments, simply modify the filenames and run_types arrays in the script
