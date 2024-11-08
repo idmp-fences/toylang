@@ -21,6 +21,11 @@ final {
 [Pest](https://pest.rs/) is used to parse the *toy* language.
 The full grammar can be found at [parser/src/toy.pest](parser/src/toy.pest).
 
+## Paper
+
+The paper _Optimizing Fence Placement in TSO_ can be read [here](
+https://docs.google.com/viewer?url=https://lucasvanmol.github.io/projects/optimizing-fence-placement/Optimizing_fence_placement_in_TSO.pdf). Instructions for recreating the experiments can be found below.
+
 ## Build 
 
 For a more optimized executable, run the following build command with the environment variable `RUSTFLAGS="-C target-cpu=native"` (done by default in `.cargo/config.toml`):
